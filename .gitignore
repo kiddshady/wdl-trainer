@@ -1,0 +1,11 @@
+node_modules/
+dist/
+out/
+.vite/
+*.log
+.DS_Store
+
+# generated at build time (copy-css + island bundles)
+renderer/css/tokens.css
+renderer/css/ui.css
+renderer/js/islands/

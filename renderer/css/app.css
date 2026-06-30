@@ -1,0 +1,203 @@
+/* App shell — titlebar (frameless drag region), nav, window controls, content.
+   Tokens + component styles come from tokens.css + ui.css (loaded first). This is just the chrome. */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--u-bg);
+  color: var(--u-text);
+  font-family: var(--u-font);
+  font-weight: var(--u-font-weight);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+#app { display: flex; flex-direction: column; height: 100vh; }
+
+/* --- frameless titlebar --- */
+.titlebar {
+  height: var(--u-titlebar-h);
+  display: flex; align-items: center; justify-content: space-between;
+  padding-left: 14px;
+  background: var(--u-bg);
+  border-bottom: 1px solid var(--u-border-soft);
+  -webkit-app-region: drag;     /* drag the window by the titlebar */
+  flex-shrink: 0;
+}
+.tb-left { display: flex; align-items: center; gap: 16px; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; letter-spacing: 0.02em; }
+.brand-mark { width: 9px; height: 9px; border-radius: 50%; background: var(--u-accent); box-shadow: 0 0 0 3px var(--u-accent-soft); }
+.brand-logo { display: block; flex-shrink: 0; }
+
+.tb-nav { display: flex; gap: 2px; -webkit-app-region: no-drag; }
+.tb-nav button {
+  font-family: inherit; font-size: 12.5px; color: var(--u-text-dim);
+  background: transparent; border: none; cursor: pointer;
+  padding: 5px 10px; border-radius: var(--u-radius-sm);
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.tb-nav button:hover { background: var(--u-bg-hover); color: var(--u-text); }
+.tb-nav button.active { color: var(--u-text); background: var(--u-accent-soft); }
+
+.window-controls { display: flex; -webkit-app-region: no-drag; height: 100%; }
+.window-controls button {
+  width: 46px; height: 100%;
+  background: transparent; border: none; color: var(--u-text-dim);
+  cursor: pointer; display: grid; place-items: center;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.window-controls button:hover { background: var(--u-bg-hover); color: var(--u-text); }
+.window-controls button.close:hover { background: var(--u-danger); color: #fff; }
+
+/* --- content (islands mount here) --- */
+.content { flex: 1; min-height: 0; overflow: auto; }
+.content > * { animation: app-fade-in 0.2s ease both; }
+@keyframes app-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* --- a generic panel scaffold the example islands reuse --- */
+.panel { max-width: 640px; margin: 0 auto; padding: 40px 24px; }
+.panel h2 { font-size: 18px; font-weight: 600; }
+.panel p { color: var(--u-text-dim); font-size: 14px; line-height: 1.55; }
+.panel p code { font-family: var(--u-mono); font-size: 12.5px; color: var(--u-accent); }
+.panel-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 20px; }
+.panel-field { display: flex; flex-direction: column; gap: 7px; }
+.panel-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--u-text-muted); }
+.panel-out { font-family: var(--u-mono); font-size: 12px; color: var(--u-text-dim); margin-top: 14px; }
+
+@media (prefers-reduced-motion: reduce) { .content > * { animation: none; } }
+
+/* ===================== WDL trainer panel ===================== */
+.trainer { max-width: 660px; margin: 0 auto; padding: 26px 24px 44px; }
+
+/* connection status bar */
+.trn-status {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  background: var(--u-bg-panel);
+  border: 1px solid var(--u-border-soft);
+  border-radius: var(--u-radius-md);
+}
+.trn-status .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.trn-status .dot.on  { background: var(--u-success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--u-success) 24%, transparent); }
+.trn-status .dot.off { background: var(--u-text-muted); }
+.trn-status-text { flex: 1; min-width: 0; font-family: var(--u-mono); font-size: 12px; color: var(--u-text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trn-status .btn { margin-left: auto; }
+
+.trn-hint { font-size: 12.5px; line-height: 1.5; color: var(--u-warning); margin-top: 12px; }
+.trn-note { font-size: 11.5px; line-height: 1.5; color: var(--u-text-muted); margin-top: 10px; }
+
+/* sections */
+.trn-section { margin-top: 24px; }
+.trn-section h3 {
+  font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--u-text-muted); margin-bottom: 10px;
+}
+.trn-sub { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 11px; color: var(--u-text-muted); }
+
+/* cheat rows: icon · label · hotkey chip · (clear) · control */
+.trn-list { display: flex; flex-direction: column; gap: 2px; }
+.trn-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: var(--u-radius-md);
+  transition: background 0.14s ease;
+}
+.trn-row:hover { background: var(--u-bg-hover); }
+.trn-row > .u-icon { color: var(--u-text-dim); flex-shrink: 0; }
+.trn-label { flex: 1; min-width: 0; font-size: 13.5px; color: var(--u-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trn-row .set-toggle, .trn-row .trn-fire { flex-shrink: 0; }
+.trn-fire { padding: 5px 11px; font-size: 12px; }
+
+/* the hotkey chip */
+.trn-key {
+  flex-shrink: 0; font-family: var(--u-mono); font-size: 11px; color: var(--u-text-muted);
+  background: var(--u-bg-input); border: 1px solid var(--u-border); border-radius: var(--u-radius-sm);
+  padding: 3px 9px; min-width: 70px; text-align: center; cursor: pointer; -webkit-app-region: no-drag;
+  transition: color 0.14s ease, border-color 0.14s ease;
+}
+.trn-key:hover { color: var(--u-text-dim); }
+.trn-key.bound { color: var(--u-accent); border-color: color-mix(in srgb, var(--u-accent) 45%, var(--u-border)); }
+.trn-key.capturing { color: var(--u-warning); border-color: var(--u-warning); }
+.trn-key-clear {
+  flex-shrink: 0; display: grid; place-items: center; width: 22px; height: 22px; padding: 0;
+  background: transparent; border: none; color: var(--u-text-muted); cursor: pointer;
+  border-radius: var(--u-radius-sm); transition: color 0.12s ease, background 0.12s ease;
+}
+.trn-key-clear:hover { color: var(--u-danger); background: var(--u-bg-hover); }
+
+/* lua console */
+.trn-lua {
+  width: 100%; min-height: 86px; resize: vertical; user-select: text;
+  font-family: var(--u-mono); font-size: 12.5px; line-height: 1.5; color: var(--u-text);
+  background: var(--u-bg-input); border: 1px solid var(--u-border);
+  border-radius: var(--u-radius-md); padding: 11px 12px; outline: none;
+  transition: border-color 0.14s ease;
+}
+.trn-lua:focus { border-color: var(--u-accent); }
+.trn-lua:disabled { opacity: 0.55; }
+.trn-lua::placeholder { color: var(--u-text-muted); }
+.trn-lua-row { display: flex; justify-content: flex-end; margin-top: 10px; }
+.trn-kbd { font-family: var(--u-mono); font-size: 10.5px; color: var(--u-text-muted); margin-left: 7px; }
+
+/* status log line */
+.trn-log {
+  margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--u-border-soft);
+  font-family: var(--u-mono); font-size: 12px; color: var(--u-text-dim);
+  white-space: pre-wrap; word-break: break-word;
+}
+
+/* scrollbars — Umbra's floating pill look, a touch chunkier.
+   Chromium 121+ ignores ::-webkit-scrollbar (and its border-radius) whenever the STANDARD
+   scrollbar-width / scrollbar-color are set — which @penumbra/ui does globally for Firefox.
+   That falls back to the standard scrollbar, which can't be rounded → rectangular thumb.
+   So we reset those standard props to auto here, handing rendering back to the webkit path
+   (which honours border-radius). Electron is Chromium-only, so dropping the Firefox props is fine. */
+* { scrollbar-width: auto; scrollbar-color: auto; }
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #2a2f39; border-radius: 999px;                      /* fully rounded ends → pill */
+  border: 3px solid transparent; background-clip: padding-box;   /* 12 − 2×3 = 6px visible thumb */
+}
+::-webkit-scrollbar-thumb:hover { background-color: #353b47; }
+
+/* footer credit */
+.trn-credit { margin-top: 16px; text-align: center; font-size: 11px; color: var(--u-text-muted); letter-spacing: 0.04em; }
+
+/* ===== update toast (cloned from Umbra) ===== */
+.u-toast {
+  position: fixed; right: 20px; bottom: 20px; z-index: 1200;
+  display: flex; align-items: flex-start; gap: 12px;
+  width: 340px; max-width: calc(100vw - 40px);
+  padding: 14px 14px 14px 16px;
+  background: var(--u-bg-elevated); border-radius: var(--u-radius-md);
+  box-shadow: inset 0 0 0 1px var(--u-border-soft), var(--u-toast-shadow);
+  animation: u-toast-in 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.u-toast.closing { animation: u-toast-out 0.16s ease forwards; pointer-events: none; }
+.u-toast-icon { flex: none; width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--u-bg-input); color: var(--u-accent); }
+.u-toast-main { flex: 1; min-width: 0; }
+.u-toast-title { font-size: 13px; font-weight: 600; color: var(--u-text); }
+.u-toast-msg { font-size: 12px; color: var(--u-text-dim); margin-top: 2px; line-height: 1.4; }
+.u-toast-actions { display: flex; gap: 8px; margin-top: 12px; }
+.u-toast-actions .btn { padding: 6px 12px; font-size: 12px; }
+.u-toast-x { flex: none; width: 24px; height: 24px; margin: -4px -4px 0 0; display: grid; place-items: center; border: none; background: none; color: var(--u-text-muted); border-radius: 6px; cursor: pointer; transition: background 0.12s ease, color 0.12s ease; }
+.u-toast-x:hover { background: var(--u-bg-hover); color: var(--u-text); }
+@keyframes u-toast-in  { from { opacity: 0; transform: translateY(16px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes u-toast-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(12px) scale(0.98); } }
+
+/* ===== Settings update bar (cloned from Umbra's AppUpdates) ===== */
+.set-update { display: flex; flex-direction: column; gap: 8px; }
+.set-update-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.set-update-info { display: flex; align-items: center; gap: 10px; }
+.set-update-label { font-size: 13.5px; color: var(--u-text); }
+.set-update-status { font-size: 12px; color: var(--u-text-dim); }
+.set-embed-status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--u-text-muted); font-family: var(--u-mono); }
+.set-embed-prog { display: flex; flex-direction: column; gap: 5px; width: 100%; max-width: 420px; margin-top: 4px; animation: u-fade-up 0.16s ease both; }
+.set-embed-prog-label { font-size: 11.5px; color: var(--u-text-dim); font-family: var(--u-mono); }
+.set-embed-bar { height: 6px; border-radius: 4px; background: var(--u-bg-input); overflow: hidden; }
+.set-embed-bar-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--u-accent), #1fe6ff); transition: width 0.25s ease; }
+@keyframes u-fade-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }

@@ -1,0 +1,51 @@
+{
+  "name": "wdl-trainer",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A Penumbra desktop trainer for Watch Dogs Legion (single-player).",
+  "author": "Kidd Shady",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node scripts/copy-css.mjs && node build-islands.mjs && electron .",
+    "build:ui": "node scripts/copy-css.mjs && node build-islands.mjs",
+    "gen:icon": "node scripts/gen-icon.mjs",
+    "start": "electron .",
+    "dist": "npm run build:ui && electron-builder --win --publish never",
+    "release": "npm run build:ui && electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "@penumbra/tokens": "file:C:/tools/Penumbra/packages/tokens",
+    "@penumbra/ui": "file:C:/tools/Penumbra/packages/ui",
+    "electron-updater": "^6.8.9",
+    "koffi": "^2.9.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "vite": "^5.4.11"
+  },
+  "build": {
+    "appId": "com.kiddshady.wdltrainer",
+    "productName": "wdl-trainer",
+    "directories": { "output": "dist" },
+    "publish": { "provider": "github", "owner": "kiddshady", "repo": "wdl-trainer", "releaseType": "release" },
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!renderer/src/**",
+      "!spike.mjs",
+      "!test.mjs",
+      "!**/*.map"
+    ],
+    "win": { "target": ["nsis"] },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    }
+  }
+}
