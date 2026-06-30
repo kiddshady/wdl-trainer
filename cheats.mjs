@@ -26,6 +26,7 @@ const hackAll = (hack) => [
 ].join('\n');
 
 const REFILL_ID = BigInt('0x80000002C6C24A70').toString(); // Bullet.RefillAll item id, unsigned decimal
+const REFILL_LUA = `AddItem("Items.${REFILL_ID}", 1)`;      // shared by Bullet Refill (once) + Infinite Ammo (loop)
 
 export const CHEATS = [
   // ---- toggles ----
@@ -36,6 +37,15 @@ export const CHEATS = [
   { id: 'nofelony', section: 'toggles', kind: 'toggle', label: 'Disable Felony System',
     on: 'FelonySystemEnable(0)', off: 'FelonySystemEnable(1)' },
 
+  // 'loop' kind: while ON, main fires `run` every intervalMs through the command gate (so it can
+  // never race a spawn). Bullet Refill is idempotent, so a dropped/repeated tick is harmless.
+  // Each tick is a full remote-thread injection, so FEWER ticks/sec = fewer chances to land while
+  // the game's Lua VM is in a sensitive state (the intermittent-crash cause). 900ms keeps you
+  // effectively never out of ammo; raise it to ~1500 if it still crashes, lower toward 600 for a
+  // tighter "no-reload" feel (more risk). Keep it above the gate's settle (COOLDOWN_MS in main.js).
+  { id: 'infammo',  section: 'toggles', kind: 'loop', label: 'Infinite Ammo',
+    run: REFILL_LUA, intervalMs: 900 },
+
   // ---- spawns (at reticle) ----
   { id: 'auto',       section: 'spawns', kind: 'action', label: 'Bogen Hailkal EV4 Sport', run: spawn('{966B8C19-155B-411D-A1AC-96C50E8C4FB4}') },
   { id: 'dedsecshop', section: 'spawns', kind: 'action', label: 'DedSec Shop',             run: spawnFacing('{5991467D-8E99-431F-AE1B-724D46EDE1E9}') },
@@ -44,7 +54,7 @@ export const CHEATS = [
   { id: 'sergei',     section: 'spawns', kind: 'action', label: 'Sergei',                  run: spawn('{E082946E-343D-40E6-AC9A-F3E17C31318E}') },
 
   // ---- actions ----
-  { id: 'bulletrefill', section: 'actions', kind: 'action', label: 'Bullet Refill',        run: `AddItem("Items.${REFILL_ID}", 1)` },
+  { id: 'bulletrefill', section: 'actions', kind: 'action', label: 'Bullet Refill',        run: REFILL_LUA },
   { id: 'distract',     section: 'actions', kind: 'action', label: 'Distract all in range', run: hackAll('Distract') },
   { id: 'disrupt',      section: 'actions', kind: 'action', label: 'Disrupt all in range',  run: hackAll('DisruptComm') },
   { id: 'endchase',     section: 'actions', kind: 'action', label: 'End Felony Chase',      run: 'FelonyEndChase(GetLocalPlayerEntityId())' },

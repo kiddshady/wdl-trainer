@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('app', {
     exec: (id, state) => ipcRenderer.invoke('trainer:exec', { id, state }),
     lua: (code) => ipcRenderer.invoke('trainer:lua', code),
     onHotkeyFired: (cb) => sub('trainer:hotkey-fired', cb),
+    onDisconnected: (cb) => sub('trainer:disconnected', cb),   // game closed → main reset toggles/loops
   },
 
   // global hotkeys — free assignment, persisted in main

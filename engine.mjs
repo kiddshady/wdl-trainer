@@ -136,9 +136,17 @@ export function attach() {
     return true;
   }
 
+  // Cheap, passive liveness probe: a tiny ReadProcessMemory on a known module address. No thread
+  // injection, no alloc — just a read. Returns false once the game process exits (the handle's RPM
+  // starts failing), which the main-process watchdog uses to auto-reset toggles on game close.
+  function alive() {
+    try { return !!rpm(h, singletonPtrAddr, 8); } catch { return false; }
+  }
+
   return {
     info: { pid: info.pid, module: info.module, base: hex(base), execAddr: hex(execAddr), singletonPtr: hex(singletonPtrAddr) },
     exec,
+    alive,
     close: () => CloseHandle(h),
   };
 }

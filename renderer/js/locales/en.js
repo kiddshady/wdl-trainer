@@ -33,10 +33,12 @@
     'log.connected': 'Connected — pid {pid}',
     'log.busy': 'busy — wait a sec ⏳',
     'log.busyHotkey': '{id} (hotkey) busy ⏳',
+    'log.gameClosed': 'Game closed — toggles reset. Reconnect when it’s back.',
 
     'cheat.godmode': 'God Mode',
     'cheat.nodetect': 'Disable Detection',
     'cheat.nofelony': 'Disable Felony System',
+    'cheat.infammo': 'Infinite Ammo',
     'cheat.auto': 'Car (Bogen Hailkal EV4 Sport)',
     'cheat.dedsecshop': 'DedSec Shop',
     'cheat.moto': 'Bike (Kurahawa Tourer)',

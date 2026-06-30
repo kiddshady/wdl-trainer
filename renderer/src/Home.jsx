@@ -11,7 +11,7 @@ import { useT } from './lib/i18n.js';
  */
 
 const ICON = {
-  godmode: 'shield', nodetect: 'eye-off', nofelony: 'alert-triangle',
+  godmode: 'shield', nodetect: 'eye-off', nofelony: 'alert-triangle', infammo: 'flame',
   moto: 'target', auto: 'target', sergei: 'robot', racedrone: 'zap', dedsecshop: 'database',
   bulletrefill: 'plus', distract: 'bell', disrupt: 'radio', endchase: 'rotate-ccw',
 };
@@ -81,14 +81,22 @@ function Trainer() {
       const s = await refresh();
       if (!s.attached) connect();
     })();
-    const off = window.app.trainer.onHotkeyFired((p) => {
+    const offHotkey = window.app.trainer.onHotkeyFired((p) => {
       if (!p) return;
       if (p.busy) { setLog(t('log.busyHotkey', { id: cheatName(p.id) })); return; }
       if (p.ok && p.kind === 'toggle') { (p.on ? playOn : playOff)(); setToggles((t2) => ({ ...t2, [p.id]: p.on })); setLog(`${cheatName(p.id)} → ${p.on ? 'ON' : 'OFF'}`); }
       else if (p.ok) { playOn(); setLog(`${cheatName(p.id)} → ✓`); }
       else { setLog('✗ ' + (p.error || 'hotkey')); refresh(); }
     });
-    return off;
+    // game closed (or the engine dropped): main already reset everything — re-sync the UI to OFF.
+    const offDisc = window.app.trainer.onDisconnected((p) => {
+      playOff();
+      setAttached(false);
+      setInfo(null);
+      setToggles(p?.toggles ?? {});
+      setLog(t('log.gameClosed'));
+    });
+    return () => { offHotkey(); offDisc(); };
   }, []);
 
   useEffect(() => {
@@ -153,7 +161,7 @@ function Trainer() {
             <Icon name="x" size={12} />
           </button>
         )}
-        {c.kind === 'toggle' ? (
+        {c.kind === 'toggle' || c.kind === 'loop' ? (   // loops are on/off too — render the same Toggle
           <Toggle on={!!toggles[c.id]} onChange={(n) => onToggle(c.id, n)} disabled={!attached} />
         ) : (
           <button className="btn trn-fire" onClick={() => onAction(c.id)} disabled={!attached}>
