@@ -126,7 +126,13 @@ export function attach() {
     if (th === 0n) throw new Error(`CreateRemoteThread failed ${GetLastError()}`);
     const wr = WaitForSingleObject(th, 5000);
     CloseHandle(th);
-    if (wr === WAIT_OBJECT_0) { VirtualFreeEx(h, pStub, 0, MEM_RELEASE); VirtualFreeEx(h, pCmd, 0, MEM_RELEASE); }
+    if (wr === WAIT_OBJECT_0) {
+      VirtualFreeEx(h, pStub, 0, MEM_RELEASE);   // the stub finished executing → safe to free now
+      // the game may read the Lua string a beat later (deferred execution), so freeing it
+      // immediately can be a use-after-free crash — especially on heavier spawn scripts. Defer it.
+      const cmdToFree = pCmd;
+      setTimeout(() => { try { VirtualFreeEx(h, cmdToFree, 0, MEM_RELEASE); } catch { /* ignore */ } }, 4000);
+    }
     return true;
   }
 

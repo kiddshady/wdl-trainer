@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('app', {
   },
   ping: () => ipcRenderer.invoke('demo:ping'),
   getVersion: () => ipcRenderer.invoke('app:getVersion'),
+  setLang: (code) => ipcRenderer.invoke('app:set-lang', code),
 
   // auto-update (cloned from Umbra's bridge `updates`)
   updates: {

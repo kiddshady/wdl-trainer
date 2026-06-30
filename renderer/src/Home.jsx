@@ -2,21 +2,23 @@ import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Toggle, Icon } from '@penumbra/ui';
 import { playOn, playOff } from './sound.js';
+import { useT } from './lib/i18n.js';
 
 /**
  * The trainer island. Cheats (served by main) render as rows: icon · label · hotkey chip · control.
- * Toggles use Penumbra's Toggle; actions are "Lanzar" buttons; every cheat can take a free,
- * user-assigned GLOBAL hotkey (works inside the game). Console runs any Lua string.
+ * Toggles use Penumbra's Toggle; actions are "Fire" buttons; every cheat can take a free, user-assigned
+ * GLOBAL hotkey (works inside the game). Console runs any Lua string. All strings go through useT().
  */
 
 const ICON = {
   godmode: 'shield', nodetect: 'eye-off', nofelony: 'alert-triangle',
-  endchase: 'rotate-ccw', moto: 'target', auto: 'target', sergei: 'robot', racedrone: 'zap',
+  endchase: 'rotate-ccw', bulletrefill: 'plus',
+  moto: 'target', auto: 'target', sergei: 'robot', racedrone: 'zap',
 };
 
 // Browser KeyboardEvent -> Electron Accelerator string (or null to keep waiting / ignore).
 function eventToAccelerator(e) {
-  if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return null; // wait for a real key
+  if (['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) return null;
   const mods = [];
   if (e.ctrlKey) mods.push('Ctrl');
   if (e.altKey) mods.push('Alt');
@@ -24,10 +26,10 @@ function eventToAccelerator(e) {
   if (e.metaKey) mods.push('Super');
   const code = e.code || '', k = e.key || '';
   let key = null;
-  if (/^Key[A-Z]$/.test(code)) key = code.slice(3);                 // KeyG -> G
-  else if (/^Digit[0-9]$/.test(code)) key = code.slice(5);          // Digit5 -> 5
-  else if (/^Numpad[0-9]$/.test(code)) key = 'num' + code.slice(6); // Numpad5 -> num5
-  else if (/^F\d{1,2}$/.test(k)) key = k;                           // F1..F24
+  if (/^Key[A-Z]$/.test(code)) key = code.slice(3);
+  else if (/^Digit[0-9]$/.test(code)) key = code.slice(5);
+  else if (/^Numpad[0-9]$/.test(code)) key = 'num' + code.slice(6);
+  else if (/^F\d{1,2}$/.test(k)) key = k;
   else {
     const map = {
       ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
@@ -41,15 +43,18 @@ function eventToAccelerator(e) {
 }
 
 function Trainer() {
+  const t = useT();
   const [catalog, setCatalog] = useState([]);
   const [attached, setAttached] = useState(false);
   const [info, setInfo] = useState(null);
   const [toggles, setToggles] = useState({});
   const [bindings, setBindings] = useState({});
-  const [capturing, setCapturing] = useState(null);   // cheat id currently capturing a key, or null
+  const [capturing, setCapturing] = useState(null);
   const [busy, setBusy] = useState(false);
   const [lua, setLua] = useState('');
-  const [log, setLog] = useState('Listo. Abrí el juego y conectá.');
+  const [log, setLog] = useState('');
+
+  const cheatName = (id) => t('cheat.' + id);
 
   async function refresh() {
     const s = await window.app.trainer.status();
@@ -61,31 +66,31 @@ function Trainer() {
 
   async function connect() {
     setBusy(true);
-    setLog('Conectando al juego…');
+    setLog(t('log.connecting'));
     const r = await window.app.trainer.attach();
     setBusy(false);
-    if (r.ok) { setAttached(true); setInfo(r.info); setLog(`Conectado — pid ${r.info.pid}`); }
+    if (r.ok) { setAttached(true); setInfo(r.info); setLog(t('log.connected', { pid: r.info.pid })); }
     else { setAttached(false); setInfo(null); setLog('✗ ' + r.error); }
   }
 
   useEffect(() => {
+    setLog(t('log.ready'));
     (async () => {
       setCatalog(await window.app.trainer.catalog());
       setBindings(await window.app.hotkeys.get());
       const s = await refresh();
       if (!s.attached) connect();
     })();
-    // reflect hotkey-driven changes (they can fire while the window is in the background)
     const off = window.app.trainer.onHotkeyFired((p) => {
       if (!p) return;
-      if (p.ok && p.kind === 'toggle') { (p.on ? playOn : playOff)(); setToggles((t) => ({ ...t, [p.id]: p.on })); setLog(`${p.id} (atajo) → ${p.on ? 'ON' : 'OFF'}`); }
-      else if (p.ok) setLog(`${p.id} (atajo) → ✓`);
-      else { setLog('✗ ' + (p.error || 'atajo')); refresh(); }
+      if (p.busy) { setLog(t('log.busyHotkey', { id: cheatName(p.id) })); return; }
+      if (p.ok && p.kind === 'toggle') { (p.on ? playOn : playOff)(); setToggles((t2) => ({ ...t2, [p.id]: p.on })); setLog(`${cheatName(p.id)} → ${p.on ? 'ON' : 'OFF'}`); }
+      else if (p.ok) { playOn(); setLog(`${cheatName(p.id)} → ✓`); }
+      else { setLog('✗ ' + (p.error || 'hotkey')); refresh(); }
     });
     return off;
   }, []);
 
-  // key-capture mode for assigning a hotkey
   useEffect(() => {
     if (!capturing) return;
     function onKey(e) {
@@ -93,7 +98,7 @@ function Trainer() {
       e.stopPropagation();
       if (e.key === 'Escape') { setCapturing(null); return; }
       const accel = eventToAccelerator(e);
-      if (!accel) return;                       // modifier-only / unsupported — keep waiting
+      if (!accel) return;
       bindHotkey(capturing, accel);
       setCapturing(null);
     }
@@ -103,28 +108,30 @@ function Trainer() {
 
   async function bindHotkey(id, accel) {
     const r = await window.app.hotkeys.set(id, accel);
-    if (r.ok) { setBindings(r.hotkeys); setLog(accel ? `atajo ${accel} → ${id}` : `atajo quitado de ${id}`); }
+    if (r.ok) { setBindings(r.hotkeys); setLog(accel ? `${cheatName(id)} → ${accel}` : `${cheatName(id)} ✕`); }
     else setLog('✗ ' + r.error);
   }
 
   async function onToggle(id, next) {
-    setToggles((t) => ({ ...t, [id]: next }));
+    setToggles((tg) => ({ ...tg, [id]: next }));
     const r = await window.app.trainer.exec(id, next ? 'on' : 'off');
-    if (r.ok) { (next ? playOn : playOff)(); setLog(`${id} → ${next ? 'ON' : 'OFF'}`); }
-    else { setToggles((t) => ({ ...t, [id]: !next })); setLog('✗ ' + r.error); refresh(); }
+    if (r.ok) { (next ? playOn : playOff)(); setLog(`${cheatName(id)} → ${next ? 'ON' : 'OFF'}`); }
+    else { setToggles((tg) => ({ ...tg, [id]: !next })); if (r.busy) setLog(t('log.busy')); else { setLog('✗ ' + r.error); refresh(); } }
   }
 
   async function onAction(id) {
     const r = await window.app.trainer.exec(id);
-    setLog(r.ok ? `${id} → ✓` : '✗ ' + r.error);
-    if (!r.ok) refresh();
+    if (r.ok) { playOn(); setLog(`${cheatName(id)} → ✓`); }
+    else if (r.busy) setLog(t('log.busy'));
+    else { setLog('✗ ' + r.error); refresh(); }
   }
 
   async function onRunLua() {
     if (!lua.trim()) return;
     const r = await window.app.trainer.lua(lua);
-    setLog(r.ok ? `lua ✓  ${lua.replace(/\s+/g, ' ').slice(0, 80)}` : '✗ ' + r.error);
-    if (!r.ok) refresh();
+    if (r.ok) { playOn(); setLog(`Lua ✓  ${lua.replace(/\s+/g, ' ').slice(0, 80)}`); }
+    else if (r.busy) setLog(t('log.busy'));
+    else { setLog('✗ ' + r.error); refresh(); }
   }
 
   function renderRow(c) {
@@ -133,16 +140,16 @@ function Trainer() {
     return (
       <div className="trn-row" key={c.id}>
         <Icon name={ICON[c.id] ?? 'check'} size={16} />
-        <span className="trn-label">{c.label}</span>
+        <span className="trn-label">{cheatName(c.id)}</span>
         <button
           className={'trn-key' + (cap ? ' capturing' : accel ? ' bound' : '')}
           onClick={() => setCapturing(cap ? null : c.id)}
-          title="Asignar atajo global"
+          title={t('hotkey.assign')}
         >
-          {cap ? 'presioná…' : accel || '＋ atajo'}
+          {cap ? t('hotkey.capturing') : accel || t('hotkey.add')}
         </button>
         {accel && !cap && (
-          <button className="trn-key-clear" title="Quitar atajo" onClick={() => bindHotkey(c.id, null)}>
+          <button className="trn-key-clear" title={t('hotkey.clear')} onClick={() => bindHotkey(c.id, null)}>
             <Icon name="x" size={12} />
           </button>
         )}
@@ -150,7 +157,7 @@ function Trainer() {
           <Toggle on={!!toggles[c.id]} onChange={(n) => onToggle(c.id, n)} disabled={!attached} />
         ) : (
           <button className="btn trn-fire" onClick={() => onAction(c.id)} disabled={!attached}>
-            <Icon name="play" size={13} /> Lanzar
+            <Icon name="play" size={13} /> {t('btn.fire')}
           </button>
         )}
       </div>
@@ -165,45 +172,44 @@ function Trainer() {
       <div className="trn-status">
         <span className={'dot ' + (attached ? 'on' : 'off')} />
         <span className="trn-status-text">
-          {attached ? `Conectado · ${info?.module ?? ''} · pid ${info?.pid ?? ''}` : 'Sin conexión al juego'}
+          {attached ? t('status.connected', { module: info?.module ?? '', pid: info?.pid ?? '' }) : t('status.disconnected')}
         </span>
         <button className="btn" onClick={connect} disabled={busy}>
-          <Icon name="plug" size={14} /> {busy ? 'Conectando…' : attached ? 'Reconectar' : 'Conectar'}
+          <Icon name="plug" size={14} /> {busy ? t('btn.connecting') : attached ? t('btn.reconnect') : t('btn.connect')}
         </button>
       </div>
 
-      <p className="trn-note">Tip: los atajos son globales y funcionan dentro del juego. Usá F1–F12 o el Numpad para no pisar tus controles.</p>
+      <p className="trn-note">{t('tip.hotkeys')}</p>
 
       <section className="trn-section">
-        <h3>Toggles</h3>
+        <h3>{t('section.toggles')}</h3>
         <div className="trn-list">{toggleCheats.map(renderRow)}</div>
       </section>
 
       <section className="trn-section">
-        <h3>Acciones y spawns <span className="trn-sub">— apuntá con la retícula para los spawns</span></h3>
+        <h3>{t('section.actions')} <span className="trn-sub">{t('section.actions.sub')}</span></h3>
         <div className="trn-list">{actionCheats.map(renderRow)}</div>
       </section>
 
       <section className="trn-section">
-        <h3>Consola Lua</h3>
+        <h3>{t('section.console')}</h3>
         <textarea
           className="trn-lua"
           value={lua}
           onChange={(e) => setLua(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); onRunLua(); } }}
-          placeholder={'cualquier Lua del juego — ej:\nSetInvincibility(1)\nSetCanBeDetected(GetLocalPlayerEntityId(), 0)'}
+          placeholder={t('console.placeholder')}
           spellCheck={false}
           disabled={!attached}
         />
         <div className="trn-lua-row">
           <button className="btn primary" onClick={onRunLua} disabled={!attached}>
-            <Icon name="play" size={14} /> Ejecutar <span className="trn-kbd">Ctrl·Enter</span>
+            <Icon name="play" size={14} /> {t('btn.run')} <span className="trn-kbd">{t('console.kbd')}</span>
           </button>
         </div>
       </section>
 
       <p className="trn-log">{log}</p>
-      <p className="trn-credit">by Kidd Shady</p>
     </div>
   );
 }

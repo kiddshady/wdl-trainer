@@ -9,6 +9,10 @@ const spawn = (guid) => [
   `SpawnEntityFromArchetype("${guid}", loc[1], loc[2], loc[3], 0, 0, 0)`,
 ].join('\n');
 
+// Bullet.RefillAll item id (from reg2k's table). reg2k's "Add Item to Current Operative" runs
+// AddItem("Items.<id>", 1); 0x80000002C6C24A70 as an unsigned decimal string:
+const REFILL_ID = BigInt('0x80000002C6C24A70').toString();
+
 export const CHEATS = [
   // ---- toggles ----
   { id: 'godmode',  label: 'God Mode',               kind: 'toggle',
@@ -21,6 +25,8 @@ export const CHEATS = [
   // ---- actions ----
   { id: 'endchase', label: 'End Felony Chase',       kind: 'action',
     run: 'FelonyEndChase(GetLocalPlayerEntityId())' },
+  { id: 'bulletrefill', label: 'Bullet Refill',      kind: 'action',
+    run: `AddItem("Items.${REFILL_ID}", 1)` },          // add Bullet.RefillAll to the current operative
 
   // ---- spawns (at reticle) ----
   { id: 'moto',      label: 'Spawn moto (Kurahawa Tourer)',        kind: 'action', run: spawn('{86E6BC07-DF6F-4189-996C-9BBC68B4A6A3}') },

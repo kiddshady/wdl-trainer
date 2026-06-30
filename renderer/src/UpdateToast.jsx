@@ -1,16 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Icon, usePresence } from '@penumbra/ui';
+import { useT } from './lib/i18n.js';
 
 /**
- * Global "update ready" toast — cloned from Umbra's UpdateToast. Mounted ONCE, permanently, into
- * a host on <body> (see renderer/js/app.js), so it hears the updater's state:'ready' no matter
- * which view is open. Slides in bottom-right; offers Reiniciar y actualizar / Después.
- *
- * Packaged-only by nature (dev never reaches 'ready'). Preview the look in dev from DevTools:
+ * Global "update ready" toast — cloned from Umbra. Mounted ONCE, permanently (renderer/js/app.js).
+ * Packaged-only (dev never reaches 'ready'). Dev preview from DevTools:
  *   window.dispatchEvent(new CustomEvent('wdl:update-preview', { detail: { state: 'ready', version: '9.9.9' } }))
  */
 function UpdateToast() {
+  const t = useT();
   const [st, setSt] = useState(null);
   const [dismissed, setDismissed] = useState(null);
   const [installing, setInstalling] = useState(false);
@@ -38,16 +37,16 @@ function UpdateToast() {
     <div className={'u-toast' + (toastP.closing ? ' closing' : '')} role="status" aria-live="polite">
       <div className="u-toast-icon"><Icon name="download" size={18} /></div>
       <div className="u-toast-main">
-        <div className="u-toast-title">Actualización lista</div>
-        <div className="u-toast-msg">La versión {toastP.item} está lista para instalar.</div>
+        <div className="u-toast-title">{t('toast.title')}</div>
+        <div className="u-toast-msg">{t('toast.msg', { version: toastP.item })}</div>
         <div className="u-toast-actions">
-          <button className="btn" onClick={later} disabled={installing}>Después</button>
+          <button className="btn" onClick={later} disabled={installing}>{t('toast.later')}</button>
           <button className="btn primary" onClick={restart} disabled={installing}>
-            {installing ? 'Reiniciando…' : 'Reiniciar y actualizar'}
+            {installing ? t('toast.restarting') : t('toast.restart')}
           </button>
         </div>
       </div>
-      <button className="u-toast-x" onClick={later} disabled={installing} aria-label="Descartar">
+      <button className="u-toast-x" onClick={later} disabled={installing} aria-label={t('common.dismiss')}>
         <Icon name="x" size={14} />
       </button>
     </div>

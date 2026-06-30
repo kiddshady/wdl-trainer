@@ -36,11 +36,16 @@
     b.addEventListener('click', () => showView(b.dataset.view));
   });
 
-  showView('home');
-
-  // mount the global update toast once — permanent, independent of the view registry
-  const toastHost = $('update-toast-host');
-  if (toastHost && window.AppUpdateToast && typeof window.AppUpdateToast.mount === 'function') {
-    window.AppUpdateToast.mount(toastHost);
+  function boot() {
+    showView('home');
+    // mount the global update toast once — permanent, independent of the view registry
+    const toastHost = $('update-toast-host');
+    if (toastHost && window.AppUpdateToast && typeof window.AppUpdateToast.mount === 'function') {
+      window.AppUpdateToast.mount(toastHost);
+    }
   }
+
+  // resolve the UI language first (so islands render already-translated), then boot
+  if (window.WdlI18n && window.WdlI18n.init) window.WdlI18n.init().then(boot, boot);
+  else boot();
 })();

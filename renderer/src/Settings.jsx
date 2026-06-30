@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { Select } from '@penumbra/ui';
+import { useT, languages, getLang, setLang } from './lib/i18n.js';
 
-/**
- * Settings island — app version + the auto-update section (cloned from Umbra's AppUpdates):
- * current version, background-check status, a check/restart button, and a live download bar.
- */
+/** App updates — version, background-check status, check/restart button, live download bar. */
 function AppUpdates() {
+  const t = useT();
   const [ver, setVer] = useState('');
-  const [st, setSt] = useState(null);   // mirror of core/updater.js status
+  const [st, setSt] = useState(null);
 
   useEffect(() => {
     window.app.getVersion().then(setVer).catch(() => {});
@@ -17,29 +17,29 @@ function AppUpdates() {
 
   const state = (st && st.state) || 'idle';
   const statusText =
-    state === 'dev' ? 'Modo desarrollo — el auto-update solo corre en la app instalada.'
-      : state === 'checking' ? 'Buscando actualizaciones…'
-      : state === 'downloading' ? `Descargando v${st.version}…`
-      : state === 'ready' ? `v${st.version} lista para instalar.`
-      : state === 'error' ? `Error: ${st.error}`
-      : (st && st.checkedAt) ? 'Estás al día.'
-      : 'Se busca automáticamente en segundo plano.';
+    state === 'dev' ? t('update.status.dev')
+      : state === 'checking' ? t('update.status.checking')
+      : state === 'downloading' ? t('update.status.downloading', { version: st.version })
+      : state === 'ready' ? t('update.status.ready', { version: st.version })
+      : state === 'error' ? t('update.status.error', { error: st.error })
+      : (st && st.checkedAt) ? t('update.status.uptodate')
+      : t('update.status.auto');
 
   return (
     <div className="set-update">
       <div className="set-update-row">
         <div className="set-update-info">
-          <span className="set-update-label">Versión</span>
+          <span className="set-update-label">{t('settings.version')}</span>
           <span className="set-embed-status">{ver ? `v${ver}` : '…'}</span>
         </div>
         {state === 'ready'
-          ? <button className="btn primary" onClick={() => window.app.updates.install()}>Reiniciar y actualizar</button>
-          : <button className="btn" disabled={state !== 'idle' && state !== 'error'} onClick={() => window.app.updates.check()}>Buscar actualizaciones</button>}
+          ? <button className="btn primary" onClick={() => window.app.updates.install()}>{t('update.restart')}</button>
+          : <button className="btn" disabled={state !== 'idle' && state !== 'error'} onClick={() => window.app.updates.check()}>{t('update.check')}</button>}
       </div>
       <div className="set-update-status">{statusText}</div>
       {state === 'downloading' && (
         <div className="set-embed-prog">
-          <div className="set-embed-prog-label">Descargando v{st.version} — {st.pct}%</div>
+          <div className="set-embed-prog-label">{t('update.downloading', { version: st.version, pct: st.pct })}</div>
           <div className="set-embed-bar"><div className="set-embed-bar-fill" style={{ width: (st.pct || 0) + '%' }} /></div>
         </div>
       )}
@@ -48,6 +48,10 @@ function AppUpdates() {
 }
 
 function Settings() {
+  const t = useT();
+  const langs = languages();
+  const current = langs.find((l) => l.code === getLang()) || langs[0];
+
   return (
     <div className="panel">
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
@@ -56,12 +60,22 @@ function Settings() {
         </svg>
         <div>
           <h2>wdl-trainer</h2>
-          <p>Trainer para Watch Dogs Legion · single-player.</p>
+          <p>{t('settings.subtitle')}</p>
         </div>
       </div>
 
       <section className="trn-section">
-        <h3>Actualizaciones</h3>
+        <h3>{t('settings.language')}</h3>
+        <Select
+          value={current.label}
+          onChange={(label) => { const l = langs.find((x) => x.label === label); if (l) setLang(l.code); }}
+          options={langs.map((l) => l.label)}
+          minWidth={160}
+        />
+      </section>
+
+      <section className="trn-section">
+        <h3>{t('settings.updates')}</h3>
         <AppUpdates />
       </section>
 

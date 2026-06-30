@@ -1,17 +1,21 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, screen, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, globalShortcut, Tray, Menu } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const updater = require('./core/updater');
 
 let mainWindow = null;
+let tray = null;
+let isQuitting = false;
+let lang = 'en';              // UI language for the tray labels (mirrors config.language)
 
 // --- WDL trainer engine (koffi). engine.mjs/cheats.mjs are ESM; load lazily from CJS main. ---
 let engine = null;            // attached engine instance, or null when not connected
 let trainer = null;           // { attach, byId, CHEATS }
 const toggleState = {};       // id -> bool — authoritative toggle state (so hotkeys can flip it)
 const hotkeys = {};           // id -> accelerator string, currently registered
+let cooldownUntil = 0;        // ms timestamp — serialize commands + a brief per-kind settle (avoids spawn crashes)
 async function loadTrainer() {
   if (!trainer) {
     const [eng, cat] = await Promise.all([import('./engine.mjs'), import('./cheats.mjs')]);
@@ -25,22 +29,29 @@ function notify(channel, payload) {
 }
 
 // Fire a cheat by id (used by both clicks and global hotkeys). Toggles flip their stored state.
+// One command at a time, with a brief per-kind cooldown after each — so a spawn (heavier Lua)
+// can't be raced by another command (the main cause of spawn crashes). Returns { ok:false, busy:true }
+// when something is already in its settle window.
+const COOLDOWN_MS = { toggle: 70, lua: 120, action: 160 };
+function gateExec(kind, run) {
+  if (Date.now() < cooldownUntil) return { ok: false, busy: true };
+  try {
+    const r = run();                                       // engine.exec is synchronous (blocks the thread)
+    cooldownUntil = Date.now() + (COOLDOWN_MS[kind] || 140);
+    return r;
+  } catch (e) { engine = null; return { ok: false, error: e.message }; }
+}
+
 async function fireCheat(id) {
   if (!engine) { notify('trainer:hotkey-fired', { id, ok: false, error: 'No conectado al juego.' }); return; }
-  try {
-    const { byId } = await loadTrainer();
-    const c = byId(id);
-    if (!c) return;
-    if (c.kind === 'toggle') {
-      const next = !toggleState[id];
-      engine.exec(next ? c.on : c.off);
-      toggleState[id] = next;
-      notify('trainer:hotkey-fired', { id, kind: 'toggle', on: next, ok: true });
-    } else {
-      engine.exec(c.run);
-      notify('trainer:hotkey-fired', { id, kind: 'action', ok: true });
-    }
-  } catch (e) { engine = null; notify('trainer:hotkey-fired', { id, ok: false, error: e.message }); }
+  const { byId } = await loadTrainer();
+  const c = byId(id);
+  if (!c) return;
+  const r = gateExec(c.kind, () => {
+    if (c.kind === 'toggle') { const next = !toggleState[id]; engine.exec(next ? c.on : c.off); toggleState[id] = next; return { ok: true, kind: 'toggle', on: next }; }
+    engine.exec(c.run); return { ok: true, kind: 'action' };
+  });
+  notify('trainer:hotkey-fired', { id, ...r });
 }
 
 // Register/replace/clear a global hotkey for a cheat. accel=null clears it.
@@ -107,7 +118,37 @@ function createWindow() {
 
   mainWindow.on('maximize', () => mainWindow.webContents.send('window:state', { maximized: true }));
   mainWindow.on('unmaximize', () => mainWindow.webContents.send('window:state', { maximized: false }));
+  mainWindow.on('close', (e) => { if (!isQuitting) { e.preventDefault(); mainWindow.hide(); } }); // close → tray
   mainWindow.on('closed', () => { mainWindow = null; });
+}
+
+// show / restore / focus the window (from the tray, a second launch, or dock activate)
+function showWindow() {
+  if (!mainWindow) { createWindow(); return; }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+// system tray — close-to-tray keeps the app (and its global hotkeys) alive in the background
+const TRAY_LABELS = {
+  en: { show: 'Show wdl-trainer', quit: 'Quit' },
+  es: { show: 'Mostrar wdl-trainer', quit: 'Salir' },
+};
+function trayMenu() {
+  const L = TRAY_LABELS[lang] || TRAY_LABELS.en;
+  return Menu.buildFromTemplate([
+    { label: L.show, click: showWindow },
+    { type: 'separator' },
+    { label: L.quit, click: () => { isQuitting = true; app.quit(); } },
+  ]);
+}
+function createTray() {
+  if (tray) return;
+  tray = new Tray(path.join(__dirname, 'build', 'icon.png'));
+  tray.setToolTip('wdl-trainer');
+  tray.setContextMenu(trayMenu());
+  tray.on('click', showWindow);
 }
 
 function registerIpc() {
@@ -140,19 +181,18 @@ function registerIpc() {
   });
   ipcMain.handle('trainer:exec', async (_e, { id, state }) => {
     if (!engine) return { ok: false, error: 'No conectado al juego.' };
-    try {
-      const { byId } = await loadTrainer();
-      const c = byId(id);
-      if (!c) return { ok: false, error: `cheat desconocido: ${id}` };
+    const { byId } = await loadTrainer();
+    const c = byId(id);
+    if (!c) return { ok: false, error: `cheat desconocido: ${id}` };
+    return gateExec(c.kind, () => {
       if (c.kind === 'toggle') { engine.exec(state === 'off' ? c.off : c.on); toggleState[id] = state !== 'off'; }
       else engine.exec(c.run);
       return { ok: true };
-    } catch (e) { engine = null; return { ok: false, error: e.message }; }   // drop on failure → UI reflects disconnect
+    });
   });
   ipcMain.handle('trainer:lua', async (_e, code) => {
     if (!engine) return { ok: false, error: 'No conectado al juego.' };
-    try { engine.exec(String(code || '')); return { ok: true }; }
-    catch (e) { engine = null; return { ok: false, error: e.message }; }
+    return gateExec('lua', () => { engine.exec(String(code || '')); return { ok: true }; });
   });
 
   // --- global hotkeys: free user assignment, persisted ---
@@ -165,6 +205,7 @@ function registerIpc() {
 
   // --- app version + auto-update (electron-updater, cloned from Umbra) ---
   ipcMain.handle('app:getVersion', () => app.getVersion());
+  ipcMain.handle('app:set-lang', (_e, code) => { lang = code === 'es' ? 'es' : 'en'; if (tray) tray.setContextMenu(trayMenu()); return true; });
   ipcMain.handle('updates:status', () => updater.getStatus());
   ipcMain.handle('updates:check', () => updater.check());
   ipcMain.handle('updates:install', () => updater.quitAndInstall());
@@ -173,12 +214,23 @@ function registerIpc() {
   ipcMain.handle('demo:ping', () => `pong @ ${new Date().toLocaleTimeString()}`);
 }
 
-app.whenReady().then(() => {
-  registerIpc();
-  createWindow();
-  loadHotkeys();
-  updater.init({ onStatus: (s) => notify('updates:status', s) });
-});
-app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('will-quit', () => { globalShortcut.unregisterAll(); });
+// single instance — a second launch just focuses the running window instead of opening another
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => showWindow());
+
+  app.whenReady().then(() => {
+    registerIpc();
+    createWindow();
+    lang = readConfig().language === 'es' ? 'es' : 'en';
+    createTray();
+    loadHotkeys();
+    updater.init({ onStatus: (s) => notify('updates:status', s) });
+  });
+
+  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); else showWindow(); });
+  app.on('window-all-closed', () => { /* stay alive in the tray — quit only via the tray menu */ });
+  app.on('before-quit', () => { isQuitting = true; });
+  app.on('will-quit', () => { globalShortcut.unregisterAll(); });
+}
