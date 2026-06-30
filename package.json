@@ -1,7 +1,7 @@
 {
   "name": "wdl-trainer",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A Penumbra desktop trainer for Watch Dogs Legion (single-player).",
   "author": "Kidd Shady",
   "main": "main.js",
@@ -23,6 +23,7 @@
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",
+    "png-to-ico": "^2.1.8",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8",
@@ -35,13 +36,15 @@
     "publish": { "provider": "github", "owner": "kiddshady", "repo": "wdl-trainer", "releaseType": "release" },
     "files": [
       "**/*",
+      "build/icon.png",
+      "build/icon.ico",
       "!dist/**",
       "!renderer/src/**",
       "!spike.mjs",
       "!test.mjs",
       "!**/*.map"
     ],
-    "win": { "target": ["nsis"] },
+    "win": { "target": ["nsis"], "icon": "build/icon.ico" },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,

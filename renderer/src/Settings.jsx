@@ -56,7 +56,7 @@ function Settings() {
     <div className="panel">
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
         <svg viewBox="0 0 64 64" width="34" height="34" fill="none" aria-hidden="true">
-          <path d="M10 8 L21 42 L32 18 L43 42 L54 8 M10 8 L32 56 L54 8" stroke="var(--u-accent)" strokeWidth="6" strokeLinejoin="miter" />
+          <path d="M8 8 L17 47 L32 19 L47 47 L56 8 M8 8 L32 55 L56 8" stroke="var(--u-accent)" strokeWidth="6" strokeLinejoin="miter" />
         </svg>
         <div>
           <h2>wdl-trainer</h2>

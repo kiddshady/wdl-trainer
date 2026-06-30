@@ -12,8 +12,8 @@ import { useT } from './lib/i18n.js';
 
 const ICON = {
   godmode: 'shield', nodetect: 'eye-off', nofelony: 'alert-triangle',
-  endchase: 'rotate-ccw', bulletrefill: 'plus',
-  moto: 'target', auto: 'target', sergei: 'robot', racedrone: 'zap',
+  moto: 'target', auto: 'target', sergei: 'robot', racedrone: 'zap', dedsecshop: 'database',
+  bulletrefill: 'plus', distract: 'bell', disrupt: 'radio', endchase: 'rotate-ccw',
 };
 
 // Browser KeyboardEvent -> Electron Accelerator string (or null to keep waiting / ignore).
@@ -164,8 +164,11 @@ function Trainer() {
     );
   }
 
-  const toggleCheats = catalog.filter((c) => c.kind === 'toggle');
-  const actionCheats = catalog.filter((c) => c.kind === 'action');
+  const sectionOf = (c) => c.section || (c.kind === 'toggle' ? 'toggles' : 'actions');
+  const group = (s) => catalog.filter((c) => sectionOf(c) === s).sort((a, b) => cheatName(a.id).localeCompare(cheatName(b.id)));
+  const toggleCheats = group('toggles');
+  const spawnCheats = group('spawns');
+  const actionCheats = group('actions');
 
   return (
     <div className="trainer">
@@ -187,7 +190,12 @@ function Trainer() {
       </section>
 
       <section className="trn-section">
-        <h3>{t('section.actions')} <span className="trn-sub">{t('section.actions.sub')}</span></h3>
+        <h3>{t('section.spawns')} <span className="trn-sub">{t('section.spawns.sub')}</span></h3>
+        <div className="trn-list">{spawnCheats.map(renderRow)}</div>
+      </section>
+
+      <section className="trn-section">
+        <h3>{t('section.actions')}</h3>
         <div className="trn-list">{actionCheats.map(renderRow)}</div>
       </section>
 

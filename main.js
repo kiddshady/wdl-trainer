@@ -118,7 +118,7 @@ function createWindow() {
 
   mainWindow.on('maximize', () => mainWindow.webContents.send('window:state', { maximized: true }));
   mainWindow.on('unmaximize', () => mainWindow.webContents.send('window:state', { maximized: false }));
-  mainWindow.on('close', (e) => { if (!isQuitting) { e.preventDefault(); mainWindow.hide(); } }); // close → tray
+  mainWindow.on('close', (e) => { if (!isQuitting && tray) { e.preventDefault(); mainWindow.hide(); } }); // close → tray (only if the tray exists)
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
@@ -145,10 +145,15 @@ function trayMenu() {
 }
 function createTray() {
   if (tray) return;
-  tray = new Tray(path.join(__dirname, 'build', 'icon.png'));
-  tray.setToolTip('wdl-trainer');
-  tray.setContextMenu(trayMenu());
-  tray.on('click', showWindow);
+  try {
+    // build/icon.ico (multi-size) is crisper in the Windows tray than a scaled png.
+    // build/ is electron-builder's buildResources dir, so it's only inside the package because
+    // we list build/icon.* explicitly in `files` — otherwise the tray icon goes missing.
+    tray = new Tray(path.join(__dirname, 'build', 'icon.ico'));
+    tray.setToolTip('wdl-trainer');
+    tray.setContextMenu(trayMenu());
+    tray.on('click', showWindow);
+  } catch (e) { tray = null; /* tray unavailable → close will quit instead of hiding (no zombie) */ }
 }
 
 function registerIpc() {
@@ -168,7 +173,7 @@ function registerIpc() {
   // --- WDL trainer: catalog + attach + exec, bridged to the renderer ---
   ipcMain.handle('trainer:catalog', async () => {
     const { CHEATS } = await loadTrainer();
-    return CHEATS.map(({ id, label, kind }) => ({ id, label, kind }));
+    return CHEATS.map(({ id, label, kind, section }) => ({ id, label, kind, section }));
   });
   ipcMain.handle('trainer:status', () => ({ attached: !!engine, info: engine ? engine.info : null, toggles: { ...toggleState } }));
   ipcMain.handle('trainer:attach', async () => {
