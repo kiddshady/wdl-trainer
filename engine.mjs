@@ -153,6 +153,7 @@ export function attach() {
   const leakedOnTimeout = [];    // addrs we couldn't free because a thread timed out still using them
   let mailbox = 0n, mtCmdPage = 0n;  // EXPERIMENTAL main-thread hook: mailbox page + reusable Lua cmd page
   let hookState = null;              // { target, stolenLen, stolen, pHandler, full } while a hook is installed
+  let hookRefs = 0;                  // refcount so the refill loop + spawns SHARE one resident hook (0 = none)
   let mtBusy = false;                // one-main-thread-command-in-flight guard (mtCmdPage is reused)
   let spawnSite;                     // spawn hook site: undefined=untried, null=not found, {addr,stolenLen}=resolved
   let spawnValidated = false;        // true once we've confirmed the site is a live per-frame callsite
@@ -384,6 +385,13 @@ export function attach() {
     if (hookState) throw new Error('a hook is already installed — uninstall first');
     if (stolenLen < 14) throw new Error('stolenLen must be >=14 (absolute jmp is 14 bytes)');
     ensureMailbox();
+    // A prior uninstall (INCLUDING validateSpawnSite's probe) leaves the mailbox `disabled` flag = 1 to
+    // gate its full handler; that flag is otherwise only ever zeroed once, at first mailbox alloc. Re-arm
+    // it here for a full hook, or the handler would see disabled=1 and no-op forever — never running the
+    // Lua, never setting `done` — so the loop would silently never refill and spawns would fall back to
+    // the crash-prone foreign-thread exec(). (Pre-existing: the same probe→install-full order affected
+    // spawnOnMainThread; the standalone hooksite.mjs selftest installs full directly and so never hit it.)
+    if (full) { try { WriteProcessMemory(h, mailbox + BigInt(MB.DISABLED), i32(0), 4, null); } catch { /* ignore */ } }
     const target = BigInt(addr);
     const stolen = rpm(h, target, stolenLen);
     if (!stolen) throw new Error('cannot read stolen bytes at hook site');
@@ -452,30 +460,98 @@ export function attach() {
     return spawnSite;
   }
 
-  // Run a heavy Lua spawn ON the game's own thread via the per-frame hook — eliminates the foreign-
-  // thread race that crashes SpawnEntityFromArchetype. Validates the site is genuinely per-frame (a
-  // SAFE probe) before ever full-installing; installs full → drains the mailbox → uninstalls per call.
-  // Returns { ok, reason }; ok:false ⇒ the caller should fall back to exec() (the old, crash-prone path).
-  function spawnOnMainThread(luaCode) {
+  // ---- shared game-thread hook: refcounted so the refill loop AND spawns run on ONE resident hook ----
+  // The per-frame trampoline runs Lua on the game's own thread at a frame-safe point (no foreign-thread
+  // race). Only one hook can exist at a time (single hookState), so the loop and spawns SHARE it via a
+  // refcount: the first acquirer probe-validates + installs the full handler; later acquirers just bump
+  // the count; the last release uninstalls. This is what lets Infinite Ammo keep the hook resident for
+  // its whole ON duration while spawns still piggyback on it (instead of falling back to crash-prone exec).
+
+  // Confirm the site is a genuine per-frame sim-thread callsite before we ever full-install (a bad site =
+  // hard crash): install a do-nothing PROBE handler, watch the frameCounter climb, uninstall. Cached via
+  // spawnValidated (shared by loop + spawns). Only valid to call with NO hook resident (hookRefs === 0).
+  function validateSpawnSite(site) {
+    if (spawnValidated) return true;
+    try { installHook(site.addr, site.stolenLen, false); } catch { return false; }
+    const f0 = readFrame() ?? 0, t = Date.now() + 250;
+    while (Date.now() < t && (readFrame() ?? 0) - f0 <= 2) { /* spin briefly */ }
+    const advanced = (readFrame() ?? 0) - f0 > 2;
+    try { uninstallHook(); } catch { /* ignore */ }
+    if (advanced) spawnValidated = true;
+    return advanced;
+  }
+
+  // Acquire a reference to the full (command-running) hook: install it on the 0→1 transition, share the
+  // resident one thereafter. Returns { ok, reason }; ok:false ⇒ caller falls back to exec()/foreign loop.
+  // MUST be paired with releaseFullHook().
+  function acquireFullHook() {
     if (closed) return { ok: false, reason: 'closed' };
     const site = resolveHookSite();
     if (!site) return { ok: false, reason: 'hook site not found (game build?)' };
-    if (hookState) return { ok: false, reason: 'a hook is already installed' };
-    if (!spawnValidated) {   // probe-validate (retry until it passes once; spawns are in-world so the sim site ticks)
-      try { installHook(site.addr, site.stolenLen, false); } catch { return { ok: false, reason: 'probe install failed' }; }
-      const f0 = readFrame() ?? 0, t = Date.now() + 250;
-      while (Date.now() < t && (readFrame() ?? 0) - f0 <= 2) { /* spin briefly */ }
-      const advanced = (readFrame() ?? 0) - f0 > 2;
-      try { uninstallHook(); } catch { /* ignore */ }
-      if (!advanced) return { ok: false, reason: 'site not ticking (menu / not in-world?)' };
-      spawnValidated = true;
+    if (hookRefs > 0) {                                   // a full hook is already resident → share it
+      if (!hookState || !hookState.full) return { ok: false, reason: 'resident hook is not full' };
+      hookRefs++;
+      return { ok: true };
     }
+    if (!validateSpawnSite(site)) return { ok: false, reason: 'site not ticking (menu / not in-world?)' };
+    try { installHook(site.addr, site.stolenLen, true); }
+    catch (e) { return { ok: false, reason: e.message }; }
+    hookRefs = 1;
+    return { ok: true };
+  }
+
+  // Release a hook reference; the LAST release uninstalls (restores the stolen bytes). Null/closed-safe so
+  // it can run during teardown — close() forces hookRefs=0 and restores bytes itself as a backstop.
+  function releaseFullHook() {
+    if (hookRefs === 0) return;
+    hookRefs--;
+    if (hookRefs === 0 && !closed) { try { uninstallHook(); } catch { /* ignore */ } }
+  }
+
+  // Run a heavy Lua spawn ON the game's own thread via the shared hook — eliminates the foreign-thread
+  // race that crashes SpawnEntityFromArchetype. Piggybacks on the loop's resident hook if one is up, else
+  // installs one for the duration of this call. Returns { ok, reason }; ok:false ⇒ caller falls back to exec().
+  function spawnOnMainThread(luaCode) {
+    if (closed) return { ok: false, reason: 'closed' };
+    const acq = acquireFullHook();
+    if (!acq.ok) return { ok: false, reason: acq.reason };
     try {
-      installHook(site.addr, site.stolenLen, true);
       const done = execOnMainThread(luaCode, 1500);
       return { ok: done, reason: done ? 'ok' : 'hook did not fire' };
     } catch (e) { return { ok: false, reason: e.message }; }
-    finally { try { uninstallHook(); } catch { /* ignore */ } }
+    finally { releaseFullHook(); }
+  }
+
+  // Prepare a game-thread LOOP command (e.g. Infinite Ammo): keep the shared hook resident and, each
+  // fire(), only ARM the mailbox — the game thread runs the Lua per-frame at a safe phase, zero
+  // CreateRemoteThread per tick (the whole point: no accumulating foreign-thread race over a long session).
+  // The hook is acquired LAZILY on the first in-world fire, so toggling ON in a menu doesn't fail — it just
+  // retries each tick until the site ticks. fire() NEVER throws: an mtBusy overlap with an in-flight spawn,
+  // or being out-of-world, is a harmless idempotent skip (returns false) — so a benign overlap can't drive
+  // main.js's gateExec catch into a full teardown. Throws at CREATION only if the build has no usable hook
+  // site → the caller falls back to the foreign-thread prepare() loop. dispose() drops the hook reference.
+  function prepareMainThreadLoop(luaCode) {
+    if (closed) throw new Error('engine closed');
+    if (!resolveHookSite()) throw new Error('hook site not found (game build?)');
+    let disposed = false, acquired = false;
+    return {
+      fire() {
+        if (disposed || closed) return false;
+        if (readSingleton() === 0n) return false;        // not in a playable state → skip; don't acquire yet
+        if (!acquired) {
+          const acq = acquireFullHook();
+          if (!acq.ok) return false;                     // site not ticking yet (menu/loading) → retry next tick
+          acquired = true;
+        }
+        try { return execOnMainThread(luaCode, 150); }
+        catch { return false; }                          // mtBusy overlap with a spawn → harmless skip (never propagate)
+      },
+      dispose() {
+        if (disposed) return;
+        disposed = true;
+        if (acquired) { releaseFullHook(); acquired = false; }
+      },
+    };
   }
 
   // ---- hook-site DISCOVERY helpers (read-only; used to find a per-frame sim-thread callsite) ----
@@ -581,6 +657,7 @@ export function attach() {
 
   function close() {
     closed = true;                                         // make pending deferred frees no-op first
+    hookRefs = 0;                                          // any later releaseFullHook() becomes a no-op
     if (hookState) {                                        // remove any main-thread hook so the game
       try { WriteProcessMemory(h, mailbox + BigInt(MB.DISABLED), i32(1), 4, null); } catch { /* ignore */ }
       try { patchAtomic(hookState.target, hookState.stolen); } catch { /* ignore */ } // stops entering our handler
@@ -602,6 +679,7 @@ export function attach() {
     info: { pid: info.pid, module: info.module, base: hex(base), execAddr: hex(execAddr), singletonPtr: hex(singletonPtrAddr), spawnHook: spawnSite ? hex(spawnSite.addr) : null },
     exec,
     prepare,
+    prepareMainThreadLoop,             // loop cheats (Infinite Ammo) → keep the shared hook resident, arm per tick
     spawnOnMainThread,                 // heavy spawns → run on the game thread (crash-free); falls back to exec()
     alive,
     close,

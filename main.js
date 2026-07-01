@@ -62,8 +62,15 @@ function execCheat(c) {
 function startLoop(c) {
   if (loops[c.id]) return;                                 // already running
   let cmd;
-  try { cmd = engine.prepare(c.run); }                     // alloc the persistent stub + buffer ONCE
-  catch (e) { notify('trainer:hotkey-fired', { id: c.id, ok: false, error: e.message }); return; }
+  // Prefer the game-thread hook: keep the shared per-frame hook resident and only ARM the mailbox each
+  // tick — no foreign-thread CreateRemoteThread, so the refill can't race the frame (removes the
+  // accumulating "closes over time" crash). Falls back to the foreign-thread loop (engine.prepare) only
+  // when the build has no usable hook site, so the feature degrades gracefully instead of failing.
+  try { cmd = engine.prepareMainThreadLoop(c.run); }       // game-thread loop (crash-free)
+  catch (e) {
+    try { cmd = engine.prepare(c.run); }                   // no hook site → foreign-thread loop fallback
+    catch (e2) { notify('trainer:hotkey-fired', { id: c.id, ok: false, error: e2.message }); return; }
+  }
   const tick = () => {
     if (!engine) return handleDisconnect('error');         // engine gone → full teardown
     const r = gateExec('loop', () => { cmd.fire(); return { ok: true }; });
