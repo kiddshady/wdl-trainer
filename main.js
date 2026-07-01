@@ -41,25 +41,41 @@ function gateExec(kind, run) {
     const r = run();                                       // engine.exec is synchronous (blocks the thread)
     cooldownUntil = Date.now() + (COOLDOWN_MS[kind] || 140);
     return r;
-  } catch (e) { engine = null; return { ok: false, error: e.message }; }
+  } catch (e) { handleDisconnect('error'); return { ok: false, error: e.message }; } // tear down NOW, don't wait for the watchdog
+}
+
+// Heavy spawns run on the game's OWN thread via the per-frame hook (no foreign-thread race → no
+// crash). Everything else, and any spawn where the hook isn't available (unknown build / in a menu),
+// falls back to the normal foreign-thread exec(). Both go through gateExec so they stay serialized.
+function execCheat(c) {
+  if (engine.spawnOnMainThread && /SpawnEntityFromArchetype/.test(c.run)) {
+    const r = engine.spawnOnMainThread(c.run);
+    if (r.ok) return;                                      // ran safely on the game thread
+  }
+  engine.exec(c.run);                                      // light cheat, or spawn fallback
 }
 
 // --- 'loop' cheats: while ON, re-fire `c.run` every c.intervalMs through the same gate as manual
-// commands, so a refill tick can never race a heavier spawn (the known crash cause). A tick dropped
-// as "busy" is harmless — the refill is idempotent and the next tick tops up anyway. ---
+// commands, so a refill tick can never race a heavier spawn (the known crash cause). The Lua is
+// pre-injected ONCE via engine.prepare(); each tick only relaunches the thread — no per-tick
+// alloc/free and no per-tick use-after-free window. A tick dropped as "busy" is harmless. ---
 function startLoop(c) {
   if (loops[c.id]) return;                                 // already running
+  let cmd;
+  try { cmd = engine.prepare(c.run); }                     // alloc the persistent stub + buffer ONCE
+  catch (e) { notify('trainer:hotkey-fired', { id: c.id, ok: false, error: e.message }); return; }
   const tick = () => {
     if (!engine) return handleDisconnect('error');         // engine gone → full teardown
-    const r = gateExec('loop', () => { engine.exec(c.run); return { ok: true }; });
-    if (!r.ok && r.error) handleDisconnect('error');       // exec threw → gate nulled engine; tear down
+    const r = gateExec('loop', () => { cmd.fire(); return { ok: true }; });
+    if (!r.ok && r.error) handleDisconnect('error');       // fire threw → gate tore down; finish here
   };
-  loops[c.id] = setInterval(tick, c.intervalMs || 500);
+  loops[c.id] = { interval: setInterval(tick, c.intervalMs || 500), cmd };
   toggleState[c.id] = true;
   tick();                                                  // first refill immediately, not after a full interval
 }
 function stopLoop(id) {
-  if (loops[id]) { clearInterval(loops[id]); delete loops[id]; }
+  const l = loops[id];
+  if (l) { clearInterval(l.interval); try { l.cmd.dispose(); } catch { /* ignore */ } delete loops[id]; }
   toggleState[id] = false;
 }
 function stopAllLoops() { for (const id of Object.keys(loops)) stopLoop(id); }
@@ -99,7 +115,7 @@ async function fireCheat(id) {
   }
   const r = gateExec(c.kind, () => {
     if (c.kind === 'toggle') { const next = !toggleState[id]; engine.exec(next ? c.on : c.off); toggleState[id] = next; return { ok: true, kind: 'toggle', on: next }; }
-    engine.exec(c.run); return { ok: true, kind: 'action' };
+    execCheat(c); return { ok: true, kind: 'action' };
   });
   notify('trainer:hotkey-fired', { id, ...r });
 }
@@ -230,6 +246,8 @@ function registerIpc() {
     try {
       const { attach } = await loadTrainer();
       stopWatchdog();                          // pause liveness checks across the handle swap (no false disconnect)
+      stopAllLoops();                          // drop loops bound to the old handle
+      for (const id of Object.keys(toggleState)) toggleState[id] = false;  // fresh session → clean toggle state (renderer re-syncs via status)
       if (engine) { try { engine.close(); } catch { /* ignore */ } }
       engine = attach();                       // discover + AOB-scan + resolve (blocks ~1-2s)
       startWatchdog();                         // from here on, auto-detect the game closing
@@ -246,8 +264,8 @@ function registerIpc() {
       return { ok: true };
     }
     return gateExec(c.kind, () => {
-      if (c.kind === 'toggle') { engine.exec(state === 'off' ? c.off : c.on); toggleState[id] = state !== 'off'; }
-      else engine.exec(c.run);
+      if (c.kind === 'toggle') { const on = state !== 'off'; engine.exec(on ? c.on : c.off); toggleState[id] = on; return { ok: true, on }; }
+      execCheat(c);
       return { ok: true };
     });
   });
