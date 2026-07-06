@@ -31,7 +31,16 @@ const hackAll = (hack) => [
 ].join('\n');
 
 const REFILL_ID = BigInt('0x80000002C6C24A70').toString(); // Bullet.RefillAll item id, unsigned decimal
-const REFILL_LUA = `AddItem("Items.${REFILL_ID}", 1)`;      // shared by Bullet Refill (once) + Infinite Ammo (loop)
+// Shared by Bullet Refill (once) + Infinite Ammo (loop). Guarded so it NO-OPS when there's no local
+// operative: GetLocalPlayerEntityId() returns nil during loads / respawns / transitions (see spawnFacing
+// above) — exactly the window where AddItem would refresh a torn-down operative's inventory and CLOSE THE
+// GAME on a loading screen. The guard runs inside the VM on whichever thread executes it, so it protects
+// the game-thread loop, the foreign-thread fallback, and the manual Bullet Refill alike.
+const REFILL_LUA = [
+  'local p = GetLocalPlayerEntityId()',
+  'if not p then return end',
+  `AddItem("Items.${REFILL_ID}", 1)`,
+].join('\n');
 
 export const CHEATS = [
   // ---- toggles ----
