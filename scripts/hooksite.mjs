@@ -23,7 +23,12 @@ function connect() {
 const eng = connect();
 console.log(`✓ attached — pid ${eng.info.pid} · ${eng.info.module}`);
 console.log(`  base ${eng.info.base} · execAddr ${eng.info.execAddr} · singletonPtr ${eng.info.singletonPtr}`);
-console.log(`  spawnHook (AOB): ${eng.info.spawnHook || 'NOT FOUND — pattern not unique/absent; spawns fall back to old path'}\n`);
+console.log(`  spawnHook (AOB): ${eng.info.spawnHook || 'NOT FOUND — pattern not unique/absent; spawns fall back to old path'}`);
+// WHY null? full=0 → site absent/moved; full=1 → should've resolved; full>1 → pattern not unique;
+// relaxed>0 while full=0 → prologue prefix is there but the tail drifted (fixable pattern tweak).
+const hm = eng.hook.hookMatches();
+if (hm.error) console.log(`  HOOK_PATTERN scan errored: ${hm.error}\n`);
+else console.log(`  HOOK_PATTERN: ${hm.full.length} full match(es)${hm.full.length ? ' → ' + hm.full.map((m) => `${m.addr} (off ${m.off})`).join(', ') : ''} · ${hm.relaxedCount} relaxed(10B-prefix)\n`);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function resolveAddr(arg) {                       // `a1` → the ASLR-fresh A1 candidate (no copying rebased addrs)
@@ -47,6 +52,23 @@ if (cmd === 'measure') {
     console.log(r.perSec > 5
       ? `  → LIVE per-frame here. Do it once WALKING in-world and once in the PAUSE menu: sim site = ticks in-world, ~0 in pause.`
       : `  → ~0 here (paused / event-driven / wrong thread).`);
+  } finally { try { eng.close(); } catch { /* ignore */ } }
+
+} else if (cmd === 'disambig') {
+  // Measure EVERY HOOK_PATTERN match by its CURRENT (ASLR-rebased) address → the real per-frame sim
+  // site ticks at your FPS; the decoy siblings stay ~0. Confirms which offset the engine now auto-picks.
+  const hm = eng.hook.hookMatches();
+  if (hm.error || !hm.full || !hm.full.length) { console.error('no HOOK_PATTERN matches:', hm.error || 'none'); try { eng.close(); } catch { /* ignore */ } process.exit(1); }
+  const cd = Number(process.env.CD) || 6, win = 1500;
+  try {
+    console.log(`measuring ${hm.full.length} candidates — stay in-world and WALK the whole time:`);
+    for (let n = cd; n > 0; n--) { process.stdout.write(`\r  ⏳ starting in ${n}s …  ALT-TAB to the game and keep WALKING      `); await sleep(1000); }
+    process.stdout.write(`\r  measuring (~${(hm.full.length * win / 1000).toFixed(1)}s) — keep walking …                              \n`);
+    for (const m of hm.full) {
+      const r = await eng.hook.measure(BigInt(m.addr), 16, win);
+      console.log(`  ${m.addr}  off ${String(m.off).padEnd(11)} →  ≈ ${String(r.perSec).padStart(4)}/sec  ${r.perSec > 5 ? '← PER-FRAME (the real site)' : '(decoy — flat)'}`);
+    }
+    console.log(`\n  exactly one should tick at ~your FPS; that's the site the engine now auto-selects.`);
   } finally { try { eng.close(); } catch { /* ignore */ } }
 
 } else if (cmd === 'spawntest') {

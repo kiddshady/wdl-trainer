@@ -130,7 +130,8 @@ const buildStubIndirect = (pSlot, pCmd, fn) => Buffer.concat([
   Buffer.from([0xC3]),                       // ret
 ]);
 
-export function attach() {
+export function attach(opts = {}) {
+  const log = typeof opts.log === 'function' ? opts.log : () => {};   // flight-recorder sink (no-op unless main passes one)
   const info = discover();
   if (info.error) {
     throw new Error(`discovery failed: ${info.error} — is the game open and the terminal elevated?`);
@@ -155,7 +156,8 @@ export function attach() {
   let hookState = null;              // { target, stolenLen, stolen, pHandler, full } while a hook is installed
   let hookRefs = 0;                  // refcount so the refill loop + spawns SHARE one resident hook (0 = none)
   let mtBusy = false;                // one-main-thread-command-in-flight guard (mtCmdPage is reused)
-  let spawnSite;                     // spawn hook site: undefined=untried, null=not found, {addr,stolenLen}=resolved
+  let spawnSite;                     // spawn hook site: undefined=untried, null=not found, 'ambiguous'=>1 match (see spawnCandidates), {addr,stolenLen}=resolved
+  let spawnCandidates = null;        // [{addr,stolenLen}] when the AOB matched >1 site → disambiguated live by which one ticks per-frame
   let spawnValidated = false;        // true once we've confirmed the site is a live per-frame callsite
 
   // read the live singleton (0n if not in a playable state — menu / loading / between level loads)
@@ -178,6 +180,8 @@ export function attach() {
     if (closed) throw new Error('engine closed');
     const singleton = readSingleton();
     if (singleton === 0n) throw new Error('script-system singleton is null — load a save / be in-game');
+    const tag = /SpawnEntityFromArchetype/.test(luaCode) ? 'spawn' : 'lua';
+    log('exec.foreign.begin', { tag, n: luaCode.length });   // a spawn logged here means it fell back to the crash-prone foreign thread
 
     const cmdBuf = Buffer.from(luaCode + '\0', 'utf8');
     const pCmd = VirtualAllocEx(h, 0n, cmdBuf.length, MEM_COMMIT_RESERVE, PAGE_READWRITE);
@@ -203,6 +207,7 @@ export function attach() {
       // would be a use-after-free. Don't leak them forever either — reclaim at close()/teardown.
       leakedOnTimeout.push(pStub, pCmd);
     }
+    log('exec.foreign.end', { tag, wr });
     return true;
   }
 
@@ -295,7 +300,9 @@ export function attach() {
           ok = Thread32Next(snap, e);
         }
       }
+      log('patch.begin', { target: hex(target), len: buf.length, threads: threads.length });  // if this is the LAST line before DISCONNECT → a torn write killed the game
       WriteProcessMemory(h, target, buf, buf.length, null);
+      log('patch.end', { target: hex(target) });
     } finally {
       for (const th of threads) { try { ResumeThread(th); CloseHandle(th); } catch { /* ignore */ } }
       if (!isNull(snap)) { try { CloseHandle(snap); } catch { /* ignore */ } }
@@ -399,6 +406,7 @@ export function attach() {
     const pHandler = VirtualAllocEx(h, 0n, handler.length, MEM_COMMIT_RESERVE, PAGE_EXECUTE_READWRITE);
     if (isNull(pHandler)) throw new Error(`VirtualAllocEx(handler) failed ${GetLastError()}`);
     WriteProcessMemory(h, pHandler, handler, handler.length, null);
+    log('hook.install', { addr: hex(target), full: !!full });
     // overwrite the site with `jmp pHandler`, padded with NOPs to exactly stolenLen bytes,
     // with the game's threads frozen so none executes a torn instruction mid-write.
     const patch = Buffer.concat([absJmp(pHandler), Buffer.alloc(stolenLen - 14, 0x90)]);
@@ -411,6 +419,7 @@ export function attach() {
   // handler page (freed when the game exits) — never free it out from under an in-flight game thread.
   function uninstallHook() {
     if (!hookState) return;
+    log('hook.uninstall', { addr: hex(hookState.target) });
     try { WriteProcessMemory(h, mailbox + BigInt(MB.DISABLED), i32(1), 4, null); } catch { /* ignore */ }
     // if a full-handler command is mid-flight, briefly wait for it to clear before restoring/freeing
     if (hookState.full) { const t = Date.now() + 100; while (Date.now() < t) { const p = rpm(h, mailbox + BigInt(MB.PENDING), 4); if (!p || p.readInt32LE(0) === 0) break; } }
@@ -432,6 +441,9 @@ export function attach() {
     if (mtBusy) throw new Error('a main-thread command is already in flight');
     const buf = Buffer.from(luaCode + '\0', 'utf8');
     if (buf.length > 4096) throw new Error('lua too long for the main-thread cmd page (max 4095 bytes + NUL)');
+    // Trace spawns/manual Lua but NOT the 900ms refill tick (it would flood the flight log).
+    const tag = /SpawnEntityFromArchetype/.test(luaCode) ? 'spawn' : /AddItem/.test(luaCode) ? 'refill' : 'lua';
+    const trace = tag !== 'refill';
     mtBusy = true;
     try {
       const f0 = readFrame();
@@ -439,25 +451,67 @@ export function attach() {
       WriteProcessMemory(h, mailbox + BigInt(MB.CMDPTR), u64(mtCmdPage), 8, null);
       WriteProcessMemory(h, mailbox + BigInt(MB.DONE), i32(0), 4, null);
       WriteProcessMemory(h, mailbox + BigInt(MB.PENDING), i32(1), 4, null);   // arm last
+      if (trace) log('mt.arm', { tag });   // last line before DISCONNECT here → died in the game-thread handler running this Lua
       const start = Date.now(), deadline = start + timeoutMs;
       while (Date.now() < deadline) {
         const d = rpm(h, mailbox + BigInt(MB.DONE), 4);
-        if (d && d.readInt32LE(0) === 1) return true;
-        if (Date.now() - start > 40 && f0 !== null && readFrame() === f0) break;  // hook not firing → bail
+        if (d && d.readInt32LE(0) === 1) { if (trace) log('mt.done', { tag }); return true; }
+        // Bail only if NOT ONE frame has ticked for a while — the site isn't firing (game paused/frozen),
+        // so we don't burn the whole timeout freezing the UI. Threshold must tolerate LOW fps: at ~15fps a
+        // frame is ~65ms and it drops further under spawn load, so the old 40ms spuriously bailed mid-spawn
+        // (→ foreign fallback → crash). 300ms tolerates down to ~3fps (any playable state) yet still catches
+        // a real pause fast. (For the 150ms refill this is moot — its deadline hits first.)
+        if (Date.now() - start > 300 && f0 !== null && readFrame() === f0) break;
       }
       try { WriteProcessMemory(h, mailbox + BigInt(MB.PENDING), i32(0), 4, null); } catch { /* ignore */ }  // disarm so a late frame can't fire it
+      if (trace) log('mt.timeout', { tag });
       return false;
     } finally { mtBusy = false; }
   }
 
-  // Resolve the per-frame hook site by AOB (cached per attach). Requires a UNIQUE match for safety.
+  // Resolve the per-frame hook site by AOB (cached per attach). The prologue we match (a common C++
+  // virtual: sub rsp,0x28; mov rax,[rcx]; call [rax+8]; …) also appears on decoy sibling functions, so
+  // the pattern is NOT unique on this build (3 matches observed). Rather than reject all (the old
+  // `=== 1` gate → spawnHook null → every spawn silently ran on the crash-prone foreign thread), keep
+  // the candidates and DISAMBIGUATE by behaviour: only the real site ticks per-frame on the sim thread
+  // (disambiguateHookSite, live). 1 match → resolved directly; 0 → not found.
   function resolveHookSite() {
     if (spawnSite !== undefined) return spawnSite;
     try {
       const m = scanModule(h, base, size, parsePattern(HOOK_PATTERN), HOOK_NEEDLE);
-      spawnSite = m.length === 1 ? { addr: base + BigInt(m[0].moduleOff), stolenLen: HOOK_STOLEN } : null;
+      if (m.length === 1) spawnSite = { addr: base + BigInt(m[0].moduleOff), stolenLen: HOOK_STOLEN };
+      else if (m.length === 0) spawnSite = null;
+      else {
+        spawnCandidates = m.map((x) => ({ addr: base + BigInt(x.moduleOff), stolenLen: HOOK_STOLEN }));
+        spawnSite = 'ambiguous';                          // resolved live on first in-world use
+        log('hook.ambiguous', { n: m.length, offs: m.map((x) => hex(x.moduleOff)) });
+      }
     } catch { spawnSite = null; }
     return spawnSite;
+  }
+
+  // Pick the real per-frame site among ambiguous AOB matches: probe each candidate briefly and keep the
+  // one whose frameCounter climbs on the sim thread (the decoy siblings stay flat). Needs to be in-world
+  // (singleton non-null) for the counter to move; returns null and stays 'ambiguous' otherwise, so the
+  // next in-world call retries. Synchronous (busy-wait, like validateSpawnSite) — a one-time ~0.5s hitch
+  // that gets cached. Probing a decoy is safe: the shared 16-byte prologue is position-independent.
+  function disambiguateHookSite() {
+    if (spawnSite !== 'ambiguous') return spawnSite;
+    if (readSingleton() === 0n) return null;              // not in a playable state → can't measure yet
+    let best = null, bestAdv = 2;                         // require > 2 frames over the window to count as ticking
+    for (const c of spawnCandidates) {
+      let adv = 0;
+      try {
+        installHook(c.addr, c.stolenLen, false);          // do-nothing probe (frameCounter only)
+        const f0 = readFrame() ?? 0, t = Date.now() + 180;
+        while (Date.now() < t) { /* spin briefly while the game ticks */ }
+        adv = (readFrame() ?? 0) - f0;
+      } catch { /* ignore this candidate */ }
+      try { uninstallHook(); } catch { /* ignore */ }
+      if (adv > bestAdv) { bestAdv = adv; best = c; }
+    }
+    if (best) { spawnSite = best; spawnValidated = true; log('hook.disambiguated', { addr: hex(best.addr), adv: bestAdv }); }
+    return best;                                          // null ⇒ nothing ticked (paused/not walking) → retry later
   }
 
   // ---- shared game-thread hook: refcounted so the refill loop AND spawns run on ONE resident hook ----
@@ -486,8 +540,9 @@ export function attach() {
   // MUST be paired with releaseFullHook().
   function acquireFullHook() {
     if (closed) return { ok: false, reason: 'closed' };
-    const site = resolveHookSite();
-    if (!site) return { ok: false, reason: 'hook site not found (game build?)' };
+    let site = resolveHookSite();
+    if (site === 'ambiguous') site = disambiguateHookSite();   // pick the per-frame match (needs in-world)
+    if (!site || site === 'ambiguous') return { ok: false, reason: 'hook site not resolved (ambiguous / not in-world?)' };
     if (hookRefs > 0) {                                   // a full hook is already resident → share it
       if (!hookState || !hookState.full) return { ok: false, reason: 'resident hook is not full' };
       hookRefs++;
@@ -674,9 +729,11 @@ export function attach() {
   }
 
   resolveHookSite();                   // resolve the spawn hook site now (amortized into the attach scan cost)
+  if (spawnSite === 'ambiguous') { try { disambiguateHookSite(); } catch { /* attached from a menu → resolves on first in-world spawn */ } }
 
   return {
-    info: { pid: info.pid, module: info.module, base: hex(base), execAddr: hex(execAddr), singletonPtr: hex(singletonPtrAddr), spawnHook: spawnSite ? hex(spawnSite.addr) : null },
+    info: { pid: info.pid, module: info.module, base: hex(base), execAddr: hex(execAddr), singletonPtr: hex(singletonPtrAddr),
+      spawnHook: (spawnSite && spawnSite.addr) ? hex(spawnSite.addr) : (spawnSite === 'ambiguous' ? `ambiguous(${spawnCandidates ? spawnCandidates.length : '?'})` : null) },
     exec,
     prepare,
     prepareMainThreadLoop,             // loop cheats (Infinite Ammo) → keep the shared hook resident, arm per tick
@@ -699,6 +756,16 @@ export function attach() {
       peek: (addr, n) => { const b = rpm(h, BigInt(addr), n); return b ? b.toString('hex') : null; },
       sampleRips,                       // one round of thread-RIP sampling (for the `hunt` command)
       walkBack,                         // a code addr → its function entry
+      // Diagnostic: why did spawnHook resolve to null? Reports the FULL HOOK_PATTERN matches (0 = site
+      // absent/moved, 1 = should have resolved, >1 = pattern not unique) plus a relaxed 10-byte-prefix
+      // count (prefix present but full absent ⇒ the tail drifted; both 0 ⇒ site truly gone → re-hunt).
+      hookMatches: () => {
+        try {
+          const full = scanModule(h, base, size, parsePattern(HOOK_PATTERN), HOOK_NEEDLE);
+          const relaxed = scanModule(h, base, size, parsePattern(HOOK_PATTERN).slice(0, 10), HOOK_NEEDLE);
+          return { full: full.map((m) => ({ off: hex(m.moduleOff), addr: hex(base + BigInt(m.moduleOff)) })), relaxedCount: relaxed.length };
+        } catch (e) { return { error: e.message }; }
+      },
     },
   };
 }

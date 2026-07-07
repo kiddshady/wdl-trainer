@@ -4,6 +4,7 @@ const { app, BrowserWindow, ipcMain, screen, globalShortcut, Tray, Menu } = requ
 const path = require('node:path');
 const fs = require('node:fs');
 const updater = require('./core/updater');
+const flight = require('./core/flightlog');   // JSONL trace to diagnose the random "se cierra limpio" on spawns
 
 let mainWindow = null;
 let tray = null;
@@ -48,11 +49,20 @@ function gateExec(kind, run) {
 // crash). Everything else, and any spawn where the hook isn't available (unknown build / in a menu),
 // falls back to the normal foreign-thread exec(). Both go through gateExec so they stay serialized.
 function execCheat(c) {
-  if (engine.spawnOnMainThread && /SpawnEntityFromArchetype/.test(c.run)) {
+  // Heavy spawns run ONLY on the game thread (per-frame hook). If the hook can't fire — game paused, not
+  // in-world, or momentarily not ticking — SKIP the spawn instead of falling back to engine.exec(): a heavy
+  // SpawnEntityFromArchetype on a foreign thread is exactly the clean-close crash, and spawning into a
+  // paused/transitioning world is pointless anyway. Returns a result so the UI can say why nothing appeared.
+  if (/SpawnEntityFromArchetype/.test(c.run)) {
+    if (!engine.spawnOnMainThread) { flight.log('spawn.skip', { id: c.id, reason: 'no hook support' }); return { ok: false, error: 'Spawns necesitan el hook del hilo del juego (build no soportado).' }; }
     const r = engine.spawnOnMainThread(c.run);
-    if (r.ok) return;                                      // ran safely on the game thread
+    flight.log('spawn', { id: c.id, ok: r.ok, reason: r.reason });
+    if (r.ok) return { ok: true };                         // ran safely on the game thread
+    return { ok: false, error: 'Spawn omitido — el juego tiene que estar activo y sin pausa. Usá el hotkey mientras jugás.' };
   }
-  engine.exec(c.run);                                      // light cheat, or spawn fallback
+  flight.log('exec', { id: c.id });
+  engine.exec(c.run);                                      // light cheats + non-spawn actions (single Lua call, safe on a foreign thread)
+  return { ok: true };
 }
 
 // --- 'loop' cheats: while ON, re-fire `c.run` every c.intervalMs through the same gate as manual
@@ -66,9 +76,9 @@ function startLoop(c) {
   // tick — no foreign-thread CreateRemoteThread, so the refill can't race the frame (removes the
   // accumulating "closes over time" crash). Falls back to the foreign-thread loop (engine.prepare) only
   // when the build has no usable hook site, so the feature degrades gracefully instead of failing.
-  try { cmd = engine.prepareMainThreadLoop(c.run); }       // game-thread loop (crash-free)
+  try { cmd = engine.prepareMainThreadLoop(c.run); flight.log('loop.start', { id: c.id, path: 'mainthread' }); }  // game-thread loop (crash-free)
   catch (e) {
-    try { cmd = engine.prepare(c.run); }                   // no hook site → foreign-thread loop fallback
+    try { cmd = engine.prepare(c.run); flight.log('loop.start', { id: c.id, path: 'foreign' }); }  // no hook site → foreign-thread loop fallback
     catch (e2) { notify('trainer:hotkey-fired', { id: c.id, ok: false, error: e2.message }); return; }
   }
   const tick = () => {
@@ -102,6 +112,7 @@ function stopWatchdog() { if (watchdog) { clearInterval(watchdog); watchdog = nu
 // idempotent: callable from the watchdog, a failed command, or a dying loop — runs the teardown once.
 function handleDisconnect(reason) {
   if (!engine && !watchdog) return;                        // already disconnected
+  flight.log('DISCONNECT', { reason: reason || 'closed' }); // the lines just above this say what killed the game
   stopWatchdog();
   stopAllLoops();
   for (const id of Object.keys(toggleState)) toggleState[id] = false;
@@ -122,7 +133,7 @@ async function fireCheat(id) {
   }
   const r = gateExec(c.kind, () => {
     if (c.kind === 'toggle') { const next = !toggleState[id]; engine.exec(next ? c.on : c.off); toggleState[id] = next; return { ok: true, kind: 'toggle', on: next }; }
-    execCheat(c); return { ok: true, kind: 'action' };
+    return { ...execCheat(c), kind: 'action' };
   });
   notify('trainer:hotkey-fired', { id, ...r });
 }
@@ -256,7 +267,10 @@ function registerIpc() {
       stopAllLoops();                          // drop loops bound to the old handle
       for (const id of Object.keys(toggleState)) toggleState[id] = false;  // fresh session → clean toggle state (renderer re-syncs via status)
       if (engine) { try { engine.close(); } catch { /* ignore */ } }
-      engine = attach();                       // discover + AOB-scan + resolve (blocks ~1-2s)
+      engine = attach({ log: flight.log });    // discover + AOB-scan + resolve (blocks ~1-2s)
+      // spawnHook null here = the game-thread hook did NOT resolve → every spawn falls back to the
+      // crash-prone foreign thread. The first thing to check in the log after a close.
+      flight.log('attach', { pid: engine.info.pid, module: engine.info.module, spawnHook: engine.info.spawnHook, execAddr: engine.info.execAddr, singletonPtr: engine.info.singletonPtr });
       startWatchdog();                         // from here on, auto-detect the game closing
       return { ok: true, info: engine.info };
     } catch (e) { engine = null; stopWatchdog(); return { ok: false, error: e.message }; }
@@ -272,8 +286,7 @@ function registerIpc() {
     }
     return gateExec(c.kind, () => {
       if (c.kind === 'toggle') { const on = state !== 'off'; engine.exec(on ? c.on : c.off); toggleState[id] = on; return { ok: true, on }; }
-      execCheat(c);
-      return { ok: true };
+      return execCheat(c);
     });
   });
   ipcMain.handle('trainer:lua', async (_e, code) => {
@@ -308,6 +321,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     registerIpc();
+    flight.init(path.join(app.getPath('userData'), 'logs'), { version: app.getVersion() });
     createWindow();
     lang = readConfig().language === 'es' ? 'es' : 'en';
     createTray();
