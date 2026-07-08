@@ -74,6 +74,14 @@ const GLYPH = {
     <rect x="9.5" y="9.5" width="5" height="5" rx="0.5" />
     <path d="M10 4v3M14 4v3M10 17v3M14 17v3M4 10h3M4 14h3M17 10h3M17 14h3" />
   </>),
+  terminal: (<>
+    <rect x="3" y="4" width="18" height="16" rx="1.5" />
+    <path d="M7 9l3 3-3 3M13 15h4" />
+  </>),
+  info: (<>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 11v5.5M12 7.7v.1" />
+  </>),
 };
 function Glyph({ name, size = 16, style }) {
   return (
@@ -83,10 +91,19 @@ function Glyph({ name, size = 16, style }) {
     </svg>
   );
 }
-const HEAD = { toggles: 'toggle', vehicles: 'rocket', enemies: 'reticle', others: 'die', actions: 'zap' };
+const HEAD = { toggles: 'toggle', vehicles: 'rocket', enemies: 'reticle', others: 'die', actions: 'zap', console: 'terminal' };
 function HeadIcon({ section }) {
-  return <Glyph name={HEAD[section]} size={17} style={{ verticalAlign: '-3px', marginRight: '7px', opacity: 0.9 }} />;
+  return <Glyph name={HEAD[section]} size={15} style={{ flexShrink: 0 }} />;
 }
+
+// Section cards, in display order. `code` is decorative DedSec flavor (like the game's MT-xx tags).
+const SECTIONS = [
+  { key: 'toggles',  titleKey: 'section.toggles',  code: 'MT-04T' },
+  { key: 'vehicles', titleKey: 'section.vehicles', code: 'MT-06U', subKey: 'section.spawns.sub' },
+  { key: 'enemies',  titleKey: 'section.enemies',  code: 'MT-06H' },
+  { key: 'others',   titleKey: 'section.others',   code: 'MT-06T' },
+  { key: 'actions',  titleKey: 'section.actions',  code: 'MT-06X' },
+];
 // a cheat row icon: a custom glyph (car/moto) when one exists, otherwise a Penumbra Icon
 function CheatIcon({ name }) {
   return GLYPH[name] ? <Glyph name={name} size={16} /> : <Icon name={name} size={16} />;
@@ -254,71 +271,74 @@ function Trainer() {
   }
 
   // catalog + language are the only inputs to the grouping/sort — memoize so the localeCompare sort
-  // doesn't re-run on every toggle/hotkey/log re-render.
-  const { toggleCheats, vehicleCheats, enemyCheats, otherCheats, actionCheats } = useMemo(() => {
-    const group = (s) => catalog.filter((c) => sectionOf(c) === s).sort((a, b) => cheatName(a.id).localeCompare(cheatName(b.id)));
-    return {
-      toggleCheats: group('toggles'), vehicleCheats: group('vehicles'),
-      enemyCheats: group('enemies'), otherCheats: group('others'), actionCheats: group('actions'),
-    };
+  // doesn't re-run on every toggle/hotkey/log re-render. Keyed by section; empty sections hide.
+  const grouped = useMemo(() => {
+    const out = {};
+    for (const sec of SECTIONS) {
+      out[sec.key] = catalog.filter((c) => sectionOf(c) === sec.key)
+        .sort((a, b) => cheatName(a.id).localeCompare(cheatName(b.id)));
+    }
+    return out;
   }, [catalog, t]);
+
+  function renderCard(sec) {
+    const cheats = grouped[sec.key];
+    if (!cheats || !cheats.length) return null;   // catalog-driven: skip sections with no cheats
+    return (
+      <section className="trn-card" key={sec.key}>
+        <div className="trn-card-head">
+          <HeadIcon section={sec.key} />
+          <span className="trn-card-title">{t(sec.titleKey)}</span>
+          {sec.subKey && <span className="trn-card-sub">{t(sec.subKey)}</span>}
+          <span className="trn-card-code">{sec.code}</span>
+        </div>
+        <div className="trn-list">{cheats.map(renderRow)}</div>
+      </section>
+    );
+  }
 
   return (
     <div className="trainer">
-      <div className="trn-status">
+      <div className={'trn-status' + (attached ? ' linked' : '')}>
         <span className={'dot ' + (attached ? 'on' : 'off')} />
         <span className="trn-status-text">
           {attached ? t('status.connected', { module: info?.module ?? '', pid: info?.pid ?? '' }) : t('status.disconnected')}
         </span>
-        <button className="btn" onClick={connect} disabled={busy}>
+        <button className="btn trn-connect" onClick={connect} disabled={busy}>
           <Icon name="plug" size={14} /> {busy ? t('btn.connecting') : attached ? t('btn.reconnect') : t('btn.connect')}
         </button>
       </div>
 
-      <p className="trn-note">{t('tip.hotkeys')}</p>
+      <p className="trn-note">
+        <Glyph name="info" size={14} style={{ flexShrink: 0, opacity: 0.8 }} />
+        <span>{t('tip.hotkeys')}</span>
+      </p>
 
-      <section className="trn-section">
-        <h3><HeadIcon section="toggles" />{t('section.toggles')}</h3>
-        <div className="trn-list">{toggleCheats.map(renderRow)}</div>
-      </section>
+      <div className="trn-grid">
+        {SECTIONS.map(renderCard)}
 
-      <section className="trn-section">
-        <h3><HeadIcon section="vehicles" />{t('section.vehicles')} <span className="trn-sub">{t('section.spawns.sub')}</span></h3>
-        <div className="trn-list">{vehicleCheats.map(renderRow)}</div>
-      </section>
-
-      <section className="trn-section">
-        <h3><HeadIcon section="enemies" />{t('section.enemies')}</h3>
-        <div className="trn-list">{enemyCheats.map(renderRow)}</div>
-      </section>
-
-      <section className="trn-section">
-        <h3><HeadIcon section="others" />{t('section.others')}</h3>
-        <div className="trn-list">{otherCheats.map(renderRow)}</div>
-      </section>
-
-      <section className="trn-section">
-        <h3><HeadIcon section="actions" />{t('section.actions')}</h3>
-        <div className="trn-list">{actionCheats.map(renderRow)}</div>
-      </section>
-
-      <section className="trn-section">
-        <h3>{t('section.console')}</h3>
-        <textarea
-          className="trn-lua"
-          value={lua}
-          onChange={(e) => setLua(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); onRunLua(); } }}
-          placeholder={t('console.placeholder')}
-          spellCheck={false}
-          disabled={!attached}
-        />
-        <div className="trn-lua-row">
-          <button className="btn primary" onClick={onRunLua} disabled={!attached}>
-            <Icon name="play" size={14} /> {t('btn.run')} <span className="trn-kbd">{t('console.kbd')}</span>
-          </button>
-        </div>
-      </section>
+        <section className="trn-card wide">
+          <div className="trn-card-head">
+            <HeadIcon section="console" />
+            <span className="trn-card-title">{t('section.console')}</span>
+            <span className="trn-card-code">λ</span>
+          </div>
+          <textarea
+            className="trn-lua"
+            value={lua}
+            onChange={(e) => setLua(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); onRunLua(); } }}
+            placeholder={t('console.placeholder')}
+            spellCheck={false}
+            disabled={!attached}
+          />
+          <div className="trn-lua-row">
+            <button className="btn primary" onClick={onRunLua} disabled={!attached}>
+              <Icon name="play" size={14} /> {t('btn.run')} <span className="trn-kbd">{t('console.kbd')}</span>
+            </button>
+          </div>
+        </section>
+      </div>
 
       <p className="trn-log">{log}</p>
     </div>

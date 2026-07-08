@@ -53,31 +53,40 @@ function Settings() {
   const current = langs.find((l) => l.code === getLang()) || langs[0];
 
   return (
-    <div className="panel">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
-        <svg viewBox="0 0 64 64" width="34" height="34" fill="none" aria-hidden="true">
+    <div className="settings">
+      <div className="set-hero">
+        <span className="set-hero-tag">ABOUT // DS-17</span>
+        <svg className="set-hero-logo" viewBox="0 0 64 64" width="40" height="40" fill="none" aria-hidden="true">
           <path d="M8 8 L17 47 L32 19 L47 47 L56 8 M8 8 L32 55 L56 8" stroke="var(--u-accent)" strokeWidth="6" strokeLinejoin="miter" />
         </svg>
         <div>
-          <h2>wdl-trainer</h2>
+          <h2>wdl<span className="brand-us">_</span>trainer</h2>
           <p>{t('settings.subtitle')}</p>
         </div>
       </div>
 
-      <section className="trn-section">
-        <h3>{t('settings.language')}</h3>
-        <Select
-          value={current.label}
-          onChange={(label) => { const l = langs.find((x) => x.label === label); if (l) setLang(l.code); }}
-          options={langs.map((l) => l.label)}
-          minWidth={160}
-        />
-      </section>
+      <div className="set-grid">
+        <section className="trn-card">
+          <div className="trn-card-head">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="trn-card-ico"><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5.5 5.5 7.6 7.6M16.4 16.4 18.5 18.5M18.5 5.5 16.4 7.6M7.6 16.4 5.5 18.5" /></svg>
+            <span className="trn-card-title">{t('settings.language')}</span>
+          </div>
+          <Select
+            value={current.label}
+            onChange={(label) => { const l = langs.find((x) => x.label === label); if (l) setLang(l.code); }}
+            options={langs.map((l) => l.label)}
+            minWidth={160}
+          />
+        </section>
 
-      <section className="trn-section">
-        <h3>{t('settings.updates')}</h3>
-        <AppUpdates />
-      </section>
+        <section className="trn-card">
+          <div className="trn-card-head">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="trn-card-ico"><path d="M4 12a8 8 0 1 0 2.5-5.8" /><path d="M3 4v5h5" /></svg>
+            <span className="trn-card-title">{t('settings.updates')}</span>
+          </div>
+          <AppUpdates />
+        </section>
+      </div>
 
       <p className="trn-credit">by Kidd Shady</p>
     </div>
