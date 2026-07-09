@@ -311,8 +311,12 @@ function Trainer() {
     );
   }
 
+  // error logs are prefixed "✗ " by the setLog callers — render that marker as an SVG icon, not a glyph char
+  const logIsError = log.startsWith('✗ ');
+  const logText = logIsError ? log.slice(2) : log;
+
   return (
-    <div className="trainer">
+    <div className={'trainer' + (busy ? ' connecting' : '')}>
       <div className={'trn-status' + (attached ? ' linked' : '')}>
         <span className={'dot ' + (attached ? 'on' : 'off')} />
         <span className="trn-status-text">
@@ -354,7 +358,10 @@ function Trainer() {
         </section>
       </div>
 
-      <p className="trn-log">{log}</p>
+      <p className="trn-log">
+        {logIsError && <Icon name="x" size={13} />}
+        <span>{logText}</span>
+      </p>
     </div>
   );
 }

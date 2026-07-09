@@ -188,6 +188,15 @@ body { background: radial-gradient(120% 120% at 50% 0%, #0d0d12 0%, var(--u-bg) 
 }
 .trn-card-head svg { color: var(--u-accent); flex-shrink: 0; }
 .trn-card-title { color: var(--u-accent); font-weight: 700; letter-spacing: 2px; font-size: 12px; text-transform: uppercase; }
+/* while connecting, pulse EVERY section title in the accent so they read as "syncing" — applied to all
+   cards uniformly (the shimmer some titles showed before was an incidental GPU repaint that only hit
+   one grid column, so Vehicles/Others were left out). */
+.trainer.connecting .trn-card-title { animation: trn-title-pulse 1.2s ease-in-out infinite; }
+@keyframes trn-title-pulse {
+  0%, 100% { color: var(--u-accent); text-shadow: none; }
+  50% { color: var(--wdl-accent-bright); text-shadow: 0 0 10px var(--wdl-red-glow); }
+}
+@media (prefers-reduced-motion: reduce) { .trainer.connecting .trn-card-title { animation: none; } }
 .trn-card-sub { color: var(--u-text-muted); font-size: 11px; letter-spacing: 0; }
 .trn-card-code { margin-left: auto; color: var(--u-text-muted); font-size: 10px; letter-spacing: 0.5px; }
 
@@ -267,10 +276,13 @@ body { background: radial-gradient(120% 120% at 50% 0%, #0d0d12 0%, var(--u-bg) 
 
 /* status log line */
 .trn-log {
+  display: flex; align-items: flex-start; gap: 7px;
   margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--u-border-soft);
   font-family: var(--u-mono); font-size: 11.5px; color: var(--wdl-accent-bright); letter-spacing: 0.3px;
-  white-space: pre-wrap; word-break: break-word; min-height: 1.4em;
+  min-height: 1.4em;
 }
+.trn-log .u-icon { flex-shrink: 0; margin-top: 1px; }
+.trn-log > span { min-width: 0; white-space: pre-wrap; word-break: break-word; }
 
 /* ===================== Settings ===================== */
 .settings { max-width: 1000px; margin: 0 auto; padding: 22px 26px 40px; }
