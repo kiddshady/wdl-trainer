@@ -22,6 +22,7 @@ const CreateRemoteThread  = k.func('uint64 CreateRemoteThread(uint64 h, void* at
 const WaitForSingleObject = k.func('uint32 WaitForSingleObject(uint64 h, uint32 ms)');
 const CloseHandle         = k.func('bool CloseHandle(uint64 h)');
 const GetLastError        = k.func('uint32 GetLastError()');
+const GetExitCodeProcess  = k.func('bool GetExitCodeProcess(uint64 h, void* code)'); // 0 = clean quit, non-0 = crash
 // thread enumeration + suspend/resume — used ONLY to freeze the game while we patch code bytes
 // (so no game thread can execute a half-written instruction). Part of the experimental main-thread hook.
 const CreateToolhelp32Snapshot = k.func('uint64 CreateToolhelp32Snapshot(uint32 flags, uint32 pid)');
@@ -712,6 +713,18 @@ export function attach(opts = {}) {
     try { return !!rpm(h, singletonPtrAddr, 8); } catch { return false; }
   }
 
+  // Read the game's process exit code (valid once it's gone): 0 ≈ the user closed the game cleanly,
+  // non-zero ≈ a crash (e.g. 0xC0000005 access violation). Lets the flight log tell a user-quit from a
+  // fault — `reason:"closed"` alone cannot. Returns null on failure or if still running (STILL_ACTIVE=259).
+  function exitCode() {
+    try {
+      const b = Buffer.alloc(4);
+      if (!GetExitCodeProcess(h, b)) return null;
+      const c = b.readUInt32LE(0);
+      return c === 259 ? null : c;                          // 259 = STILL_ACTIVE → not exited yet
+    } catch { return null; }
+  }
+
   function close() {
     closed = true;                                         // make pending deferred frees no-op first
     hookRefs = 0;                                          // any later releaseFullHook() becomes a no-op
@@ -741,6 +754,7 @@ export function attach(opts = {}) {
     prepareMainThreadLoop,             // loop cheats (Infinite Ammo) → keep the shared hook resident, arm per tick
     spawnOnMainThread,                 // heavy spawns → run on the game thread (crash-free); falls back to exec()
     alive,
+    exitCode,                          // read at DISCONNECT: 0 = clean quit, non-zero = crash
     // flight-recorder heartbeat source: the per-frame counter (climbs only while a hook is resident) +
     // whether one is resident — so a hang (counter flatlines while resident) reads differently from an
     // instant close. frame is null when no hook has ever installed (mailbox unallocated).

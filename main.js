@@ -118,11 +118,16 @@ function stopWatchdog() { if (watchdog) { clearInterval(watchdog); watchdog = nu
 // idempotent: callable from the watchdog, a failed command, or a dying loop — runs the teardown once.
 function handleDisconnect(reason) {
   if (!engine && !watchdog) return;                        // already disconnected
+  const ec = engine ? engine.exitCode() : null;            // read BEFORE close() (handle still open): 0 ≈ user quit, non-zero ≈ crash
   // dump session state RIGHT above DISCONNECT (before teardown clears it): cumulative spawns by type,
   // which toggles were ON, and any running loop (Infinite Ammo) — so a close reads against exactly what
   // was active without cross-referencing earlier lines.
   flight.log('state', { spawns: { ...spawnTally }, togglesOn: Object.keys(toggleState).filter((k) => toggleState[k]), loopsOn: Object.keys(loops) });
-  flight.log('DISCONNECT', { reason: reason || 'closed' }); // the lines just above this say what killed the game
+  flight.log('DISCONNECT', {                                // exitCode/close disambiguate a user-quit from a crash (reason alone can't)
+    reason: reason || 'closed',
+    exitCode: ec == null ? null : '0x' + (ec >>> 0).toString(16),
+    close: ec === 0 ? 'clean' : ec == null ? 'unknown' : 'crash',
+  });
   stopWatchdog();
   stopAllLoops();
   for (const id of Object.keys(toggleState)) toggleState[id] = false;
