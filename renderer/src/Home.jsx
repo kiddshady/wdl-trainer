@@ -15,6 +15,7 @@ const ICON = {
   godmode: 'shield', nodetect: 'eye-off', nofelony: 'alert-triangle', infammo: 'flame',
   auto: 'car', moto: 'moto', racedrone: 'robot', sergei: 'robot',   // vehicles
   ctdrone: 'robot', bloodhound: 'robot', omniskull: 'skull',        // enemies (drones → robot; skull → skull)
+  blackspider: 'turret',                                            // allies (friendly turret)
   dedsecshop: 'database', eto: 'money', techpts: 'chip',            // others
   bulletrefill: 'plus', distract: 'bell', disrupt: 'radio', endchase: 'rotate-ccw',
 };
@@ -64,6 +65,18 @@ const GLYPH = {
     <circle cx="9.2" cy="11" r="1.5" fill="currentColor" stroke="none" /><circle cx="14.8" cy="11" r="1.5" fill="currentColor" stroke="none" />
     <path d="M10.5 19v-2M13.5 19v-2" />
   </>),
+  turret: (<>
+    <path d="M5 20h14" />
+    <rect x="7.5" y="14" width="9" height="5" rx="1.5" />
+    <circle cx="11" cy="9.5" r="3.3" />
+    <path d="M14 9h5" />
+    <circle cx="11" cy="9.5" r="0.9" fill="currentColor" stroke="none" />
+  </>),
+  operative: (<>                          {/* Allies section head: a recruited friendly operative (figure + '+') */}
+    <circle cx="10" cy="8" r="3.1" />
+    <path d="M4.6 19c0-3 2.5-5.2 5.4-5.2 1.1 0 2.1 .3 3 .8" />
+    <path d="M17.6 14.6v4.6M15.3 16.9h4.6" />
+  </>),
   money: (<>
     <rect x="2" y="6.5" width="20" height="11" rx="2" />
     <circle cx="12" cy="12" r="2.6" />
@@ -91,7 +104,7 @@ function Glyph({ name, size = 16, style }) {
     </svg>
   );
 }
-const HEAD = { toggles: 'toggle', vehicles: 'rocket', enemies: 'reticle', others: 'die', actions: 'zap', console: 'terminal' };
+const HEAD = { toggles: 'toggle', vehicles: 'rocket', enemies: 'reticle', allies: 'operative', others: 'die', actions: 'zap', console: 'terminal' };
 function HeadIcon({ section }) {
   return <Glyph name={HEAD[section]} size={15} style={{ flexShrink: 0 }} />;
 }
@@ -101,6 +114,7 @@ const SECTIONS = [
   { key: 'toggles',  titleKey: 'section.toggles',  code: 'MT-04T' },
   { key: 'vehicles', titleKey: 'section.vehicles', code: 'MT-06U', subKey: 'section.spawns.sub' },
   { key: 'enemies',  titleKey: 'section.enemies',  code: 'MT-06H' },
+  { key: 'allies',   titleKey: 'section.allies',   code: 'MT-06A' },
   { key: 'others',   titleKey: 'section.others',   code: 'MT-06T' },
   { key: 'actions',  titleKey: 'section.actions',  code: 'MT-06X' },
 ];

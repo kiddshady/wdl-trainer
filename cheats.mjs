@@ -79,6 +79,9 @@ export const CHEATS = [
   { id: 'bloodhound', section: 'enemies', kind: 'action', label: 'Albion Bloodhound Drone',        run: spawn('{b1dea99c-e3d7-434b-94e9-39c7dd6ea991}', 2.5) },
   { id: 'omniskull',  section: 'enemies', kind: 'action', label: 'Omni Skull',                     run: spawn('{040dd2eb-60d2-4d77-82fd-1f6298d9a302}') },
 
+  // ---- allies (spawn at reticle) — friendly units that fight FOR you; ground-placed, no dz ----
+  { id: 'blackspider', section: 'allies', kind: 'action', label: 'Black Spider Turret', run: spawn('{533880f7-25c0-4c8f-84df-9f968dc1717d}') },
+
   // ---- others ----
   { id: 'dedsecshop', section: 'others', kind: 'action', label: 'DedSec Shop',             run: spawnFacing('{5991467D-8E99-431F-AE1B-724D46EDE1E9}') },
   { id: 'eto',        section: 'others', kind: 'action', label: 'Add ETO (+1000)',         run: `TriggerRuleSmithRule('589221860', '', GetLocalPlayerEntityId())` },
