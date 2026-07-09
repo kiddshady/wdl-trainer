@@ -36,7 +36,7 @@
   --u-mono: 'JetBrains Mono', 'Cascadia Code', 'Cascadia Mono', ui-monospace, Consolas, 'SF Mono', Menlo, monospace;
   --u-font-weight: 450;
 
-  /* small radii — the theme uses clip-path chamfers instead of round corners */
+  /* small radii — plain rectangles, no corner chamfers */
   --u-titlebar-h: 44px;
   --u-radius-sm: 2px;
   --u-radius-md: 3px;
@@ -136,7 +136,6 @@ body { background: radial-gradient(120% 120% at 50% 0%, #0d0d12 0%, var(--u-bg) 
   padding: 16px 20px;
   background: var(--u-accent-soft);
   border: 1px solid rgba(255, 39, 64, 0.35);
-  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
   transition: border-color 0.25s ease, background 0.25s ease;
 }
 .trn-status.linked { background: rgba(49, 208, 170, 0.06); border-color: rgba(49, 208, 170, 0.4); }
@@ -154,11 +153,15 @@ body { background: radial-gradient(120% 120% at 50% 0%, #0d0d12 0%, var(--u-bg) 
   flex-shrink: 0; display: inline-flex; align-items: center; gap: 8px;
   padding: 10px 18px; font-size: 11.5px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
   color: #08080a; background: var(--u-accent); border: 1px solid var(--u-accent); border-radius: 0;
-  clip-path: polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px);
 }
 .btn.trn-connect:hover:not(:disabled) { background: var(--u-accent); filter: brightness(1.12); }
-.btn.trn-connect:active { transform: scale(0.97); }
-.btn.trn-connect:disabled { opacity: 0.5; }
+/* stay red on press + through the disabled "Connecting…" state. Without these, Penumbra's
+   .btn:active flashes the bg to --u-accent-soft (≈ near-black) and the old opacity:.5 dimmed
+   the disabled button toward black. */
+.btn.trn-connect:active { background: var(--u-accent); border-color: var(--u-accent); transform: scale(0.97); }
+/* set bg/border/color EXPLICITLY on disabled (not just opacity) so nothing — Penumbra's .btn rules or
+   any future override — can dim "Connecting…" toward black. Stays red at 85% to read as "working". */
+.btn.trn-connect:disabled { background: var(--u-accent); border-color: var(--u-accent); color: #08080a; opacity: 0.85; cursor: default; }
 .trn-status.linked .btn.trn-connect { background: rgba(49, 208, 170, 0.08); color: var(--u-success); border-color: var(--u-success); }
 
 /* hotkeys hint */
@@ -175,7 +178,6 @@ body { background: radial-gradient(120% 120% at 50% 0%, #0d0d12 0%, var(--u-bg) 
   position: relative; background: var(--u-bg-panel);
   border: 1px solid var(--u-border-soft);
   padding: 15px 18px 8px;
-  clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
 }
 .trn-card.wide { grid-column: 1 / -1; padding-bottom: 16px; }
 
@@ -209,7 +211,6 @@ body { background: radial-gradient(120% 120% at 50% 0%, #0d0d12 0%, var(--u-bg) 
   padding: 6px 12px; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
   color: var(--wdl-accent-bright); background: rgba(255, 39, 64, 0.06);
   border: 1px solid var(--u-accent); border-radius: 0;
-  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
 }
 .btn.trn-fire:hover:not(:disabled) { background: rgba(255, 39, 64, 0.2); color: #fff; }
 .btn.trn-fire:active:not(:disabled) { transform: scale(0.96); }
@@ -219,7 +220,6 @@ body { background: radial-gradient(120% 120% at 50% 0%, #0d0d12 0%, var(--u-bg) 
    Track is wider (46px) so the knob throw is 24px, not ui.css's 18px. */
 .set-toggle {
   width: 46px; height: 22px; border-radius: 0;
-  clip-path: polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px);
   background: #141418; border: 1px solid var(--u-border);
 }
 .set-toggle span { width: 14px; height: 14px; top: 3px; left: 3px; border-radius: 0; background: #55555d; }
@@ -231,7 +231,7 @@ body { background: radial-gradient(120% 120% at 50% 0%, #0d0d12 0%, var(--u-bg) 
 .trn-key {
   flex-shrink: 0; font-family: var(--u-mono); font-size: 11px; color: var(--u-text-muted);
   background: var(--u-bg-input); border: 1px solid var(--u-border);
-  border-radius: 0; clip-path: polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px);
+  border-radius: 0;
   padding: 4px 9px; min-width: 72px; text-align: center; cursor: pointer; -webkit-app-region: no-drag;
   transition: color 0.14s ease, border-color 0.14s ease, background 0.14s ease;
 }
@@ -250,7 +250,7 @@ body { background: radial-gradient(120% 120% at 50% 0%, #0d0d12 0%, var(--u-bg) 
   width: 100%; min-height: 90px; resize: vertical; user-select: text;
   font-family: var(--u-mono); font-size: 12.5px; line-height: 1.6; color: #c9ccd1;
   background: var(--u-bg-input); border: 1px solid var(--u-border);
-  border-radius: 0; clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  border-radius: 0;
   padding: 13px 14px; outline: none; margin-top: 4px;
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
@@ -261,7 +261,7 @@ body { background: radial-gradient(120% 120% at 50% 0%, #0d0d12 0%, var(--u-bg) 
 .trn-lua-row .btn.primary {
   display: inline-flex; align-items: center; gap: 7px;
   padding: 10px 18px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; font-size: 11.5px;
-  border-radius: 0; clip-path: polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px);
+  border-radius: 0;
 }
 .trn-kbd { font-family: var(--u-mono); font-size: 10px; text-transform: none; letter-spacing: 0; opacity: 0.6; margin-left: 3px; }
 
@@ -279,7 +279,6 @@ body { background: radial-gradient(120% 120% at 50% 0%, #0d0d12 0%, var(--u-bg) 
   padding: 22px 24px; margin-bottom: 16px;
   background: linear-gradient(100deg, var(--u-accent-soft), rgba(0, 0, 0, 0.2));
   border: 1px solid rgba(255, 39, 64, 0.4);
-  clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
 }
 .set-hero-tag {
   position: absolute; top: 0; left: 0; font-size: 10px; letter-spacing: 2px; color: var(--u-text-muted);
@@ -317,7 +316,6 @@ body { background: radial-gradient(120% 120% at 50% 0%, #0d0d12 0%, var(--u-bg) 
   width: 340px; max-width: calc(100vw - 40px);
   padding: 14px 14px 14px 16px;
   background: var(--u-bg-elevated);
-  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
   box-shadow: inset 0 0 0 1px rgba(255, 39, 64, 0.3), var(--u-toast-shadow);
   animation: u-toast-in 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
