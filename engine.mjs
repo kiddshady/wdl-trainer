@@ -441,9 +441,11 @@ export function attach(opts = {}) {
     if (mtBusy) throw new Error('a main-thread command is already in flight');
     const buf = Buffer.from(luaCode + '\0', 'utf8');
     if (buf.length > 4096) throw new Error('lua too long for the main-thread cmd page (max 4095 bytes + NUL)');
-    // Trace spawns/manual Lua but NOT the 900ms refill tick (it would flood the flight log).
+    // Trace EVERY main-thread command, refills INCLUDED — at the 3000ms cadence that's ~1 line/3s (no
+    // flood), and it's the only way an Infinite-Ammo-ON campaign isn't blind to what fired between the
+    // last spawn and a DISCONNECT (closes land ~20s later, in the previously-invisible refill window).
     const tag = /SpawnEntityFromArchetype/.test(luaCode) ? 'spawn' : /AddItem/.test(luaCode) ? 'refill' : 'lua';
-    const trace = tag !== 'refill';
+    const trace = true;
     mtBusy = true;
     try {
       const f0 = readFrame();
@@ -739,6 +741,10 @@ export function attach(opts = {}) {
     prepareMainThreadLoop,             // loop cheats (Infinite Ammo) → keep the shared hook resident, arm per tick
     spawnOnMainThread,                 // heavy spawns → run on the game thread (crash-free); falls back to exec()
     alive,
+    // flight-recorder heartbeat source: the per-frame counter (climbs only while a hook is resident) +
+    // whether one is resident — so a hang (counter flatlines while resident) reads differently from an
+    // instant close. frame is null when no hook has ever installed (mailbox unallocated).
+    sampleLiveness: () => ({ frame: mailbox !== 0n ? readFrame() : null, hookResident: hookRefs > 0 }),
     close,
     // EXPERIMENTAL main-thread hook (off by default; see the block above). Use probe() to validate a
     // candidate per-frame callsite with the game running BEFORE installing the full handler.

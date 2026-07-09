@@ -19,6 +19,7 @@ const hotkeys = {};           // id -> accelerator string, currently registered
 const loops = {};             // id -> setInterval handle for 'loop' cheats (auto-repeat, e.g. infinite ammo)
 let watchdog = null;          // setInterval handle — passively polls the game's liveness while attached
 let cooldownUntil = 0;        // ms timestamp — serialize commands + a brief per-kind settle (avoids spawn crashes)
+let spawnTally = {};          // id -> count of successful game-thread spawns this session (flight-log context, reset on attach)
 async function loadTrainer() {
   if (!trainer) {
     const [eng, cat] = await Promise.all([import('./engine.mjs'), import('./cheats.mjs')]);
@@ -56,6 +57,7 @@ function execCheat(c) {
   if (/SpawnEntityFromArchetype/.test(c.run)) {
     if (!engine.spawnOnMainThread) { flight.log('spawn.skip', { id: c.id, reason: 'no hook support' }); return { ok: false, error: 'Spawns necesitan el hook del hilo del juego (build no soportado).' }; }
     const r = engine.spawnOnMainThread(c.run);
+    if (r.ok) spawnTally[c.id] = (spawnTally[c.id] || 0) + 1;   // cumulative per session → dumped at DISCONNECT
     flight.log('spawn', { id: c.id, ok: r.ok, reason: r.reason });
     if (r.ok) return { ok: true };                         // ran safely on the game thread
     return { ok: false, error: 'Spawn omitido — el juego tiene que estar activo y sin pausa. Usá el hotkey mientras jugás.' };
@@ -104,7 +106,11 @@ function startWatchdog() {
   if (watchdog) return;
   watchdog = setInterval(() => {
     if (!engine) return handleDisconnect('error');         // a command already failed → finish cleanup
-    if (!engine.alive()) handleDisconnect('closed');       // game process is gone
+    if (!engine.alive()) return handleDisconnect('closed'); // game process is gone
+    // heartbeat: record the per-frame counter each tick. While a hook is resident (Infinite Ammo on, or
+    // mid-spawn) it should keep climbing; if it flatlines before a DISCONNECT the game thread HUNG, vs an
+    // instant close where the last heartbeat looks healthy and the process is simply gone next tick.
+    try { const s = engine.sampleLiveness(); flight.log('heartbeat', { frame: s.frame, resident: s.hookResident }); } catch { /* best-effort */ }
   }, 1500);
 }
 function stopWatchdog() { if (watchdog) { clearInterval(watchdog); watchdog = null; } }
@@ -112,6 +118,10 @@ function stopWatchdog() { if (watchdog) { clearInterval(watchdog); watchdog = nu
 // idempotent: callable from the watchdog, a failed command, or a dying loop — runs the teardown once.
 function handleDisconnect(reason) {
   if (!engine && !watchdog) return;                        // already disconnected
+  // dump session state RIGHT above DISCONNECT (before teardown clears it): cumulative spawns by type,
+  // which toggles were ON, and any running loop (Infinite Ammo) — so a close reads against exactly what
+  // was active without cross-referencing earlier lines.
+  flight.log('state', { spawns: { ...spawnTally }, togglesOn: Object.keys(toggleState).filter((k) => toggleState[k]), loopsOn: Object.keys(loops) });
   flight.log('DISCONNECT', { reason: reason || 'closed' }); // the lines just above this say what killed the game
   stopWatchdog();
   stopAllLoops();
@@ -266,6 +276,7 @@ function registerIpc() {
       stopWatchdog();                          // pause liveness checks across the handle swap (no false disconnect)
       stopAllLoops();                          // drop loops bound to the old handle
       for (const id of Object.keys(toggleState)) toggleState[id] = false;  // fresh session → clean toggle state (renderer re-syncs via status)
+      spawnTally = {};                          // fresh session tally for the flight log
       if (engine) { try { engine.close(); } catch { /* ignore */ } }
       engine = attach({ log: flight.log });    // discover + AOB-scan + resolve (blocks ~1-2s)
       // spawnHook null here = the game-thread hook did NOT resolve → every spawn falls back to the
