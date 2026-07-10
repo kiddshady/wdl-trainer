@@ -20,6 +20,7 @@ const loops = {};             // id -> setInterval handle for 'loop' cheats (aut
 let watchdog = null;          // setInterval handle — passively polls the game's liveness while attached
 let cooldownUntil = 0;        // ms timestamp — serialize commands + a brief per-kind settle (avoids spawn crashes)
 let spawnTally = {};          // id -> count of successful game-thread spawns this session (flight-log context, reset on attach)
+let attaching = null;         // in-flight attach() promise — attach awaits now, so a 2nd call must JOIN it, never race a half-swapped engine
 async function loadTrainer() {
   if (!trainer) {
     const [eng, cat] = await Promise.all([import('./engine.mjs'), import('./cheats.mjs')]);
@@ -275,21 +276,35 @@ function registerIpc() {
     return CHEATS.map(({ id, label, kind, section }) => ({ id, label, kind, section }));
   });
   ipcMain.handle('trainer:status', () => ({ attached: !!engine, info: engine ? engine.info : null, toggles: { ...toggleState } }));
-  ipcMain.handle('trainer:attach', async () => {
-    try {
-      const { attach } = await loadTrainer();
-      stopWatchdog();                          // pause liveness checks across the handle swap (no false disconnect)
-      stopAllLoops();                          // drop loops bound to the old handle
-      for (const id of Object.keys(toggleState)) toggleState[id] = false;  // fresh session → clean toggle state (renderer re-syncs via status)
-      spawnTally = {};                          // fresh session tally for the flight log
-      if (engine) { try { engine.close(); } catch { /* ignore */ } }
-      engine = attach({ log: flight.log });    // discover + AOB-scan + resolve (blocks ~1-2s)
-      // spawnHook null here = the game-thread hook did NOT resolve → every spawn falls back to the
-      // crash-prone foreign thread. The first thing to check in the log after a close.
-      flight.log('attach', { pid: engine.info.pid, module: engine.info.module, spawnHook: engine.info.spawnHook, execAddr: engine.info.execAddr, singletonPtr: engine.info.singletonPtr });
-      startWatchdog();                         // from here on, auto-detect the game closing
-      return { ok: true, info: engine.info };
-    } catch (e) { engine = null; stopWatchdog(); return { ok: false, error: e.message }; }
+  // attach() is async now (it yields so the window keeps painting — see the note atop engine.mjs). That
+  // means other handlers CAN run between the old engine closing and the new one landing, which the old
+  // synchronous attach made impossible. Two guards keep that gap safe:
+  //   · `engine = null` before awaiting — every consumer (trainer:exec, trainer:lua, fireCheat, the
+  //     watchdog, trainer:status) already gates on `if (!engine)`, so each correctly reports "not
+  //     connected" instead of reaching into the CLOSED handle.
+  //   · `attaching` — a second attach (double click, hotkey, the renderer's auto-connect on mount) JOINS
+  //     the in-flight promise instead of tearing down an engine that is still being built.
+  ipcMain.handle('trainer:attach', () => {
+    if (attaching) return attaching;
+    attaching = (async () => {
+      try {
+        const { attach } = await loadTrainer();
+        stopWatchdog();                          // pause liveness checks across the handle swap (no false disconnect)
+        stopAllLoops();                          // drop loops bound to the old handle
+        for (const id of Object.keys(toggleState)) toggleState[id] = false;  // fresh session → clean toggle state (renderer re-syncs via status)
+        spawnTally = {};                          // fresh session tally for the flight log
+        if (engine) { try { engine.close(); } catch { /* ignore */ } }
+        engine = null;                           // publish "detached" for the whole await (see above)
+        engine = await attach({ log: flight.log });   // discover + AOB-scan + resolve (~1-2s, no longer blocking)
+        // spawnHook null here = the game-thread hook did NOT resolve → every spawn falls back to the
+        // crash-prone foreign thread. The first thing to check in the log after a close.
+        flight.log('attach', { pid: engine.info.pid, module: engine.info.module, spawnHook: engine.info.spawnHook, execAddr: engine.info.execAddr, singletonPtr: engine.info.singletonPtr });
+        startWatchdog();                         // from here on, auto-detect the game closing
+        return { ok: true, info: engine.info };
+      } catch (e) { engine = null; stopWatchdog(); return { ok: false, error: e.message }; }
+      finally { attaching = null; }
+    })();
+    return attaching;
   });
   ipcMain.handle('trainer:exec', async (_e, { id, state }) => {
     if (!engine) return { ok: false, error: 'No conectado al juego.' };

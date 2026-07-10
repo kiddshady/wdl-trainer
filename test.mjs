@@ -23,7 +23,7 @@ if (!id || id === 'list') {
 
 let eng;
 try {
-  eng = attach();
+  eng = await attach();
 } catch (e) {
   console.error('✗', e.message);
   process.exit(1);

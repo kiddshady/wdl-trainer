@@ -1,15 +1,27 @@
 // engine.mjs — the proven WDL engine, refactored into a reusable module.
 //
 //   import { attach } from './engine.mjs';
-//   const eng = attach();          // discover + AOB-scan + resolve (once)
+//   const eng = await attach();     // discover + AOB-scan + resolve (once)
 //   eng.exec('SetInvincibility(1)') // fire any Lua string into the game's VM
 //
 // Runs in Node (the Electron MAIN process, later). Requires Administrator + game open.
 
 import koffi from 'koffi';
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 const hex = (v) => '0x' + BigInt(v).toString(16);
+const execFileAsync = promisify(execFile);
+
+// attach() runs on Electron's MAIN process, which on Windows owns the window's message pump. ANY
+// synchronous stretch there stops the window from servicing paint messages, so it presents a half-
+// repainted frame — that is the "one grid column shimmers while connecting" artifact, not a CSS bug.
+// attach() used to block ~1-2s straight (sync PowerShell + module scans + a busy-wait probe), which is
+// also exactly the window in which `.trainer.connecting` is applied, so its pulse animation could never
+// render. Hence: every long step inside attach yields. Nothing on the spawn path changed — it is
+// serialized and blocking by contract.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const yieldToLoop = () => new Promise((r) => setImmediate(r));
 
 // ---- Win32 (handles = opaque uint64 BigInt) ----
 const k = koffi.load('kernel32.dll');
@@ -42,7 +54,7 @@ const CONTEXT_CONTROL_AMD64 = 0x00100001, CTX_FLAGS_OFF = 0x30, CTX_RIP_OFF = 0x
 
 const PATTERN = '48 8B 0D ? ? ? ? 48 8D 15 ? ? ? ? 45 31 C0 E8 ? ? ? ? 80 3D ? ? ? ? 00 74';
 
-function discover() {
+async function discover() {
   const ps = `
 $ErrorActionPreference='Stop'
 try {
@@ -55,8 +67,8 @@ try {
   if (-not $m) { @{ error='dunia-module-not-found' } | ConvertTo-Json -Compress; return }
   [pscustomobject]@{ pid=$p.Id; base=$m.BaseAddress.ToInt64().ToString(); size=$m.ModuleMemorySize; module=$m.ModuleName } | ConvertTo-Json -Compress
 } catch { @{ error=$_.Exception.Message } | ConvertTo-Json -Compress | Write-Output }`;
-  const out = execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { encoding: 'utf8' });
-  return JSON.parse(out.trim());
+  const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { encoding: 'utf8' });
+  return JSON.parse(stdout.trim());
 }
 
 function rpm(h, addr, len) {
@@ -69,21 +81,40 @@ function matchAt(buf, i, pat) {
   for (let j = 0; j < pat.length; j++) if (pat[j] !== -1 && buf[i + j] !== pat[j]) return false;
   return true;
 }
-function scanModule(h, base, size, pat, needle = Buffer.from([0x48, 0x8B, 0x0D])) {
-  const CHUNK = 8 * 1024 * 1024, step = CHUNK - (pat.length - 1);
-  const hits = new Map();
-  for (let off = 0; off < size; off += step) {
-    const len = Math.min(CHUNK, size - off);
-    const buf = rpm(h, base + BigInt(off), len);
-    if (!buf) continue;
-    let idx = 0;
-    while ((idx = buf.indexOf(needle, idx)) !== -1) {
-      if (idx + pat.length <= buf.length && matchAt(buf, idx, pat))
-        hits.set(off + idx, Buffer.from(buf.subarray(idx, idx + pat.length)));
-      idx += 1;
-    }
+const SCAN_CHUNK = 8 * 1024 * 1024;
+const DEFAULT_NEEDLE = Buffer.from([0x48, 0x8B, 0x0D]);
+// chunks overlap by pat.length-1 so a match straddling a boundary is still found
+const scanStep = (pat) => SCAN_CHUNK - (pat.length - 1);
+const scanHits = (hits) => [...hits.entries()].map(([moduleOff, bytes]) => ({ moduleOff, bytes }));
+
+// scan ONE window into `hits` — the unit of work shared by the sync and async scanners below
+function scanChunk(h, base, size, pat, needle, off, hits) {
+  const len = Math.min(SCAN_CHUNK, size - off);
+  const buf = rpm(h, base + BigInt(off), len);
+  if (!buf) return;
+  let idx = 0;
+  while ((idx = buf.indexOf(needle, idx)) !== -1) {
+    if (idx + pat.length <= buf.length && matchAt(buf, idx, pat))
+      hits.set(off + idx, Buffer.from(buf.subarray(idx, idx + pat.length)));
+    idx += 1;
   }
-  return [...hits.entries()].map(([moduleOff, bytes]) => ({ moduleOff, bytes }));
+}
+
+function scanModule(h, base, size, pat, needle = DEFAULT_NEEDLE) {
+  const hits = new Map();
+  for (let off = 0; off < size; off += scanStep(pat)) scanChunk(h, base, size, pat, needle, off, hits);
+  return scanHits(hits);
+}
+
+// Same scan, yielding between chunks. attach() uses this so scanning a ~200 MB module can't stall the
+// main process (see the note by `sleep`). The sync twin stays for the spawn path, which blocks by design.
+async function scanModuleAsync(h, base, size, pat, needle = DEFAULT_NEEDLE) {
+  const hits = new Map();
+  for (let off = 0; off < size; off += scanStep(pat)) {
+    scanChunk(h, base, size, pat, needle, off, hits);
+    await yieldToLoop();
+  }
+  return scanHits(hits);
 }
 
 // AOB for the per-frame sim-thread function we hook to run spawns on the game thread (found live via
@@ -131,9 +162,9 @@ const buildStubIndirect = (pSlot, pCmd, fn) => Buffer.concat([
   Buffer.from([0xC3]),                       // ret
 ]);
 
-export function attach(opts = {}) {
+export async function attach(opts = {}) {
   const log = typeof opts.log === 'function' ? opts.log : () => {};   // flight-recorder sink (no-op unless main passes one)
-  const info = discover();
+  const info = await discover();
   if (info.error) {
     throw new Error(`discovery failed: ${info.error} — is the game open and the terminal elevated?`);
   }
@@ -141,7 +172,7 @@ export function attach(opts = {}) {
   const h = OpenProcess(PROCESS_ACCESS, false, info.pid);
   if (isNull(h)) throw new Error(`OpenProcess failed (GetLastError ${GetLastError()}) — run as Administrator`);
 
-  const matches = scanModule(h, base, size, parsePattern(PATTERN));
+  const matches = await scanModuleAsync(h, base, size, parsePattern(PATTERN));
   if (!matches.length) throw new Error('in-game Lua signature not found (different game build?)');
   const { moduleOff, bytes } = matches[0];
   const matchAddr = base + BigInt(moduleOff);
@@ -478,18 +509,32 @@ export function attach(opts = {}) {
   // `=== 1` gate → spawnHook null → every spawn silently ran on the crash-prone foreign thread), keep
   // the candidates and DISAMBIGUATE by behaviour: only the real site ticks per-frame on the sim thread
   // (disambiguateHookSite, live). 1 match → resolved directly; 0 → not found.
+  // Classify the AOB matches into spawnSite / spawnCandidates. Split out from the scan itself so attach()
+  // can scan asynchronously while the spawn path scans inline — both land on identical state.
+  function classifyHookMatches(m) {
+    if (m.length === 1) spawnSite = { addr: base + BigInt(m[0].moduleOff), stolenLen: HOOK_STOLEN };
+    else if (m.length === 0) spawnSite = null;
+    else {
+      spawnCandidates = m.map((x) => ({ addr: base + BigInt(x.moduleOff), stolenLen: HOOK_STOLEN }));
+      spawnSite = 'ambiguous';                          // resolved live on first in-world use
+      log('hook.ambiguous', { n: m.length, offs: m.map((x) => hex(x.moduleOff)) });
+    }
+    return spawnSite;
+  }
+
   function resolveHookSite() {
     if (spawnSite !== undefined) return spawnSite;
-    try {
-      const m = scanModule(h, base, size, parsePattern(HOOK_PATTERN), HOOK_NEEDLE);
-      if (m.length === 1) spawnSite = { addr: base + BigInt(m[0].moduleOff), stolenLen: HOOK_STOLEN };
-      else if (m.length === 0) spawnSite = null;
-      else {
-        spawnCandidates = m.map((x) => ({ addr: base + BigInt(x.moduleOff), stolenLen: HOOK_STOLEN }));
-        spawnSite = 'ambiguous';                          // resolved live on first in-world use
-        log('hook.ambiguous', { n: m.length, offs: m.map((x) => hex(x.moduleOff)) });
-      }
-    } catch { spawnSite = null; }
+    try { classifyHookMatches(scanModule(h, base, size, parsePattern(HOOK_PATTERN), HOOK_NEEDLE)); }
+    catch { spawnSite = null; }
+    return spawnSite;
+  }
+
+  // Async twin, called only by attach(). Memoized on the same `spawnSite`, so by the time the sync spawn
+  // path (acquireFullHook) calls resolveHookSite() it early-returns and never scans again.
+  async function resolveHookSiteAsync() {
+    if (spawnSite !== undefined) return spawnSite;
+    try { classifyHookMatches(await scanModuleAsync(h, base, size, parsePattern(HOOK_PATTERN), HOOK_NEEDLE)); }
+    catch { spawnSite = null; }
     return spawnSite;
   }
 
@@ -508,6 +553,30 @@ export function attach(opts = {}) {
         installHook(c.addr, c.stolenLen, false);          // do-nothing probe (frameCounter only)
         const f0 = readFrame() ?? 0, t = Date.now() + 180;
         while (Date.now() < t) { /* spin briefly while the game ticks */ }
+        adv = (readFrame() ?? 0) - f0;
+      } catch { /* ignore this candidate */ }
+      try { uninstallHook(); } catch { /* ignore */ }
+      if (adv > bestAdv) { bestAdv = adv; best = c; }
+    }
+    if (best) { spawnSite = best; spawnValidated = true; log('hook.disambiguated', { addr: hex(best.addr), adv: bestAdv }); }
+    return best;                                          // null ⇒ nothing ticked (paused/not walking) → retry later
+  }
+
+  // Async twin of disambiguateHookSite, called only by attach(): AWAITS each probe window instead of
+  // spinning, so the window keeps painting while we measure (3 candidates × 180ms was the single longest
+  // block in attach). Same sequence otherwise: probe install → frame delta → uninstall no matter what.
+  // Awaiting with a probe hook installed is safe because main.js holds `engine = null` for the whole
+  // attach, so no exec / lua / hotkey can reach the engine mid-probe.
+  async function disambiguateHookSiteAsync() {
+    if (spawnSite !== 'ambiguous') return spawnSite;
+    if (readSingleton() === 0n) return null;              // not in a playable state → can't measure yet
+    let best = null, bestAdv = 2;                         // require > 2 frames over the window to count as ticking
+    for (const c of spawnCandidates) {
+      let adv = 0;
+      try {
+        installHook(c.addr, c.stolenLen, false);          // do-nothing probe (frameCounter only)
+        const f0 = readFrame() ?? 0;
+        await sleep(180);                                 // was: while (Date.now() < t) {}
         adv = (readFrame() ?? 0) - f0;
       } catch { /* ignore this candidate */ }
       try { uninstallHook(); } catch { /* ignore */ }
@@ -743,8 +812,8 @@ export function attach(opts = {}) {
     CloseHandle(h);
   }
 
-  resolveHookSite();                   // resolve the spawn hook site now (amortized into the attach scan cost)
-  if (spawnSite === 'ambiguous') { try { disambiguateHookSite(); } catch { /* attached from a menu → resolves on first in-world spawn */ } }
+  await resolveHookSiteAsync();        // resolve the spawn hook site now (amortized into the attach scan cost)
+  if (spawnSite === 'ambiguous') { try { await disambiguateHookSiteAsync(); } catch { /* attached from a menu → resolves on first in-world spawn */ } }
 
   return {
     info: { pid: info.pid, module: info.module, base: hex(base), execAddr: hex(execAddr), singletonPtr: hex(singletonPtrAddr),

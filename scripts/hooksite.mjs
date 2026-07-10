@@ -15,12 +15,12 @@ import { attach } from '../engine.mjs';
 
 const [, , cmd, addrArg, lenArg, msArg] = process.argv;
 
-function connect() {
-  try { return attach(); }
+async function connect() {
+  try { return await attach(); }   // `await` INSIDE the try, so a rejected attach still reaches the catch
   catch (e) { console.error('✗ attach failed:', e.message); console.error('  → game open + save loaded + terminal running as Administrator?'); process.exit(1); }
 }
 
-const eng = connect();
+const eng = await connect();
 console.log(`✓ attached — pid ${eng.info.pid} · ${eng.info.module}`);
 console.log(`  base ${eng.info.base} · execAddr ${eng.info.execAddr} · singletonPtr ${eng.info.singletonPtr}`);
 console.log(`  spawnHook (AOB): ${eng.info.spawnHook || 'NOT FOUND — pattern not unique/absent; spawns fall back to old path'}`);
