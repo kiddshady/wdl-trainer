@@ -12,7 +12,7 @@ import { useT } from './lib/i18n.js';
 
 // Row icons by TYPE convention: cars → car, bikes → moto, drones → robot (transport OR hostile).
 const ICON = {
-  godmode: 'shield', nodetect: 'eye-off', nofelony: 'alert-triangle', infammo: 'flame',
+  godmode: 'shield', nodetect: 'eye-off', nofelony: 'alert-triangle',
   auto: 'car', moto: 'moto', racedrone: 'robot', sergei: 'robot',   // vehicles
   ctdrone: 'robot', bloodhound: 'robot', omniskull: 'skull',        // enemies (drones → robot; skull → skull)
   blackspider: 'turret',                                            // allies (friendly turret)

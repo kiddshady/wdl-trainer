@@ -42,7 +42,6 @@
     'cheat.godmode': 'Modo Dios',
     'cheat.nodetect': 'Desactivar Detección',
     'cheat.nofelony': 'Desactivar Sistema de Delitos',
-    'cheat.infammo': 'Munición Infinita',
     'cheat.auto': 'Auto (Bogen Hailkal EV4 Sport)',
     'cheat.dedsecshop': 'Tienda DedSec',
     'cheat.moto': 'Moto (Kurahawa Tourer)',

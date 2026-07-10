@@ -31,11 +31,18 @@ const hackAll = (hack) => [
 ].join('\n');
 
 const REFILL_ID = BigInt('0x80000002C6C24A70').toString(); // Bullet.RefillAll item id, unsigned decimal
-// Shared by Bullet Refill (once) + Infinite Ammo (loop). Guarded so it NO-OPS when there's no local
-// operative: GetLocalPlayerEntityId() returns nil during loads / respawns / transitions (see spawnFacing
-// above) — exactly the window where AddItem would refresh a torn-down operative's inventory and CLOSE THE
-// GAME on a loading screen. The guard runs inside the VM on whichever thread executes it, so it protects
-// the game-thread loop, the foreign-thread fallback, and the manual Bullet Refill alike.
+// Backs the manual Bullet Refill action. Guarded so it NO-OPS when there's no local operative:
+// GetLocalPlayerEntityId() returns nil during loads / respawns / transitions (see spawnFacing above) —
+// exactly the window where AddItem would refresh a torn-down operative's inventory and CLOSE THE GAME on
+// a loading screen. The guard runs inside the VM on whichever thread executes it.
+//
+// There is deliberately NO Infinite Ammo toggle. Looping this refill exhausts the game's bounded "lua
+// buffer slot" pool and closes the game, and neither value-freeze alternative delivers what the toggle was
+// actually for (never reloading): every clip address a memory scan can reach is a HUD display copy, so
+// freezing one holds the number while the gun keeps reloading; freezing the ammo reserve only stops you
+// running out. Reading the real clip needs a debugger, and attaching one trips the game's anti-tamper and
+// closes it instantly. A single on-demand refill can't exhaust the pool — only a loop can. See the
+// value-freeze-ammo-hunt / infammo-crash-and-fix notes before re-adding anything here.
 const REFILL_LUA = [
   'local p = GetLocalPlayerEntityId()',
   'if not p then return end',
@@ -50,23 +57,6 @@ export const CHEATS = [
     on: 'SetCanBeDetected(GetLocalPlayerEntityId(), 0)', off: 'SetCanBeDetected(GetLocalPlayerEntityId(), 1)' },
   { id: 'nofelony', section: 'toggles', kind: 'toggle', label: 'Disable Felony System',
     on: 'FelonySystemEnable(0)', off: 'FelonySystemEnable(1)' },
-
-  // 'loop' kind: while ON, main fires `run` every intervalMs through the command gate (so it can
-  // never race a spawn). Bullet Refill is idempotent, so a dropped/repeated tick is harmless.
-  //
-  // CADENCE = THE crash lever (root cause, confirmed live 2026-07-07). Each tick runs AddItem via
-  // ExecuteLuaString, which enqueues the Lua string into the game's BOUNDED pool of "lua buffer slots".
-  // Hammering it in a loop exhausts the pool → the game prints "Out of lua buffer slots. Try again
-  // later." → "Insufficient memory" → downstream calls return nil → the game closes. This was reproduced
-  // even in Cheat Engine driving the same AddItem loop, so it's the ExecuteLuaString loop ITSELF, not our
-  // injection. The pool DRAINS as the game runs, so the fix is to refill slowly enough that it drains
-  // between ticks instead of filling. 3000ms keeps you effectively never out of ammo while cutting calls
-  // ~3x vs the old 900ms. If it still closes over a long session, raise toward 5000 (rate-linked = a slot
-  // leak → the real fix is below); if ammo ever feels short, lower toward 2000. Keep it above the gate's
-  // settle (COOLDOWN_MS in main.js). THE definitive fix (zero VM calls, can't exhaust anything) is a
-  // memory value-freeze on the ammo field instead of this loop — pending an ammo-address find.
-  { id: 'infammo',  section: 'toggles', kind: 'loop', label: 'Infinite Ammo',
-    run: REFILL_LUA, intervalMs: 3000 },
 
   // ---- vehicles (spawn at reticle) ----
   { id: 'auto',       section: 'vehicles', kind: 'action', label: 'Bogen Hailkal EV4 Sport', run: spawn('{966B8C19-155B-411D-A1AC-96C50E8C4FB4}') },
