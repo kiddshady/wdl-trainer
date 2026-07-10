@@ -273,7 +273,7 @@ function Trainer() {
             <Icon name="x" size={12} />
           </button>
         )}
-        {c.kind === 'toggle' || c.kind === 'loop' ? (   // loops are on/off too — render the same Toggle
+        {c.kind === 'toggle' ? (
           <Toggle on={!!toggles[c.id]} onChange={(n) => onToggle(c.id, n)} disabled={!attached} />
         ) : (
           <button className="btn trn-fire" onClick={() => onAction(c.id)} disabled={!attached}>

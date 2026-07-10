@@ -16,7 +16,6 @@ let engine = null;            // attached engine instance, or null when not conn
 let trainer = null;           // { attach, byId, CHEATS }
 const toggleState = {};       // id -> bool — authoritative toggle state (so hotkeys can flip it)
 const hotkeys = {};           // id -> accelerator string, currently registered
-const loops = {};             // id -> setInterval handle for 'loop' cheats (auto-repeat, e.g. infinite ammo)
 let watchdog = null;          // setInterval handle — passively polls the game's liveness while attached
 let cooldownUntil = 0;        // ms timestamp — serialize commands + a brief per-kind settle (avoids spawn crashes)
 let spawnTally = {};          // id -> count of successful game-thread spawns this session (flight-log context, reset on attach)
@@ -37,7 +36,7 @@ function notify(channel, payload) {
 // One command at a time, with a brief per-kind cooldown after each — so a spawn (heavier Lua)
 // can't be raced by another command (the main cause of spawn crashes). Returns { ok:false, busy:true }
 // when something is already in its settle window.
-const COOLDOWN_MS = { toggle: 70, lua: 120, action: 160, loop: 100 };
+const COOLDOWN_MS = { toggle: 70, lua: 120, action: 160 };
 function gateExec(kind, run) {
   if (Date.now() < cooldownUntil) return { ok: false, busy: true };
   try {
@@ -68,69 +67,36 @@ function execCheat(c) {
   return { ok: true };
 }
 
-// --- 'loop' cheats: while ON, re-fire `c.run` every c.intervalMs through the same gate as manual
-// commands, so a refill tick can never race a heavier spawn (the known crash cause). The Lua is
-// pre-injected ONCE via engine.prepare(); each tick only relaunches the thread — no per-tick
-// alloc/free and no per-tick use-after-free window. A tick dropped as "busy" is harmless. ---
-function startLoop(c) {
-  if (loops[c.id]) return;                                 // already running
-  let cmd;
-  // Prefer the game-thread hook: keep the shared per-frame hook resident and only ARM the mailbox each
-  // tick — no foreign-thread CreateRemoteThread, so the refill can't race the frame (removes the
-  // accumulating "closes over time" crash). Falls back to the foreign-thread loop (engine.prepare) only
-  // when the build has no usable hook site, so the feature degrades gracefully instead of failing.
-  try { cmd = engine.prepareMainThreadLoop(c.run); flight.log('loop.start', { id: c.id, path: 'mainthread' }); }  // game-thread loop (crash-free)
-  catch (e) {
-    try { cmd = engine.prepare(c.run); flight.log('loop.start', { id: c.id, path: 'foreign' }); }  // no hook site → foreign-thread loop fallback
-    catch (e2) { notify('trainer:hotkey-fired', { id: c.id, ok: false, error: e2.message }); return; }
-  }
-  const tick = () => {
-    if (!engine) return handleDisconnect('error');         // engine gone → full teardown
-    const r = gateExec('loop', () => { cmd.fire(); return { ok: true }; });
-    if (!r.ok && r.error) handleDisconnect('error');       // fire threw → gate tore down; finish here
-  };
-  loops[c.id] = { interval: setInterval(tick, c.intervalMs || 500), cmd };
-  toggleState[c.id] = true;
-  tick();                                                  // first refill immediately, not after a full interval
-}
-function stopLoop(id) {
-  const l = loops[id];
-  if (l) { clearInterval(l.interval); try { l.cmd.dispose(); } catch { /* ignore */ } delete loops[id]; }
-  toggleState[id] = false;
-}
-function stopAllLoops() { for (const id of Object.keys(loops)) stopLoop(id); }
-
 // --- liveness watchdog: while attached, passively poll the game every 1.5s (a cheap RPM, no thread
 // injection). The moment the game closes — or a command already nulled the engine — tear everything
-// down: stop loops, flip every toggle OFF, drop the engine, and tell the renderer to re-sync. ---
+// down: flip every toggle OFF, drop the engine, and tell the renderer to re-sync. ---
 function startWatchdog() {
   if (watchdog) return;
   watchdog = setInterval(() => {
     if (!engine) return handleDisconnect('error');         // a command already failed → finish cleanup
     if (!engine.alive()) return handleDisconnect('closed'); // game process is gone
-    // heartbeat: record the per-frame counter each tick. While a hook is resident (Infinite Ammo on, or
-    // mid-spawn) it should keep climbing; if it flatlines before a DISCONNECT the game thread HUNG, vs an
-    // instant close where the last heartbeat looks healthy and the process is simply gone next tick.
+    // heartbeat: record the per-frame counter each tick. While a hook is resident (mid-spawn) it should
+    // keep climbing; if it flatlines before a DISCONNECT the game thread HUNG, vs an instant close where
+    // the last heartbeat looks healthy and the process is simply gone next tick.
     try { const s = engine.sampleLiveness(); flight.log('heartbeat', { frame: s.frame, resident: s.hookResident }); } catch { /* best-effort */ }
   }, 1500);
 }
 function stopWatchdog() { if (watchdog) { clearInterval(watchdog); watchdog = null; } }
 
-// idempotent: callable from the watchdog, a failed command, or a dying loop — runs the teardown once.
+// idempotent: callable from the watchdog or a failed command — runs the teardown once.
 function handleDisconnect(reason) {
   if (!engine && !watchdog) return;                        // already disconnected
   const ec = engine ? engine.exitCode() : null;            // read BEFORE close() (handle still open): 0 ≈ user quit, non-zero ≈ crash
-  // dump session state RIGHT above DISCONNECT (before teardown clears it): cumulative spawns by type,
-  // which toggles were ON, and any running loop (Infinite Ammo) — so a close reads against exactly what
-  // was active without cross-referencing earlier lines.
-  flight.log('state', { spawns: { ...spawnTally }, togglesOn: Object.keys(toggleState).filter((k) => toggleState[k]), loopsOn: Object.keys(loops) });
+  // dump session state RIGHT above DISCONNECT (before teardown clears it): cumulative spawns by type and
+  // which toggles were ON — so a close reads against exactly what was active without cross-referencing
+  // earlier lines.
+  flight.log('state', { spawns: { ...spawnTally }, togglesOn: Object.keys(toggleState).filter((k) => toggleState[k]) });
   flight.log('DISCONNECT', {                                // exitCode/close disambiguate a user-quit from a crash (reason alone can't)
     reason: reason || 'closed',
     exitCode: ec == null ? null : '0x' + (ec >>> 0).toString(16),
     close: ec === 0 ? 'clean' : ec == null ? 'unknown' : 'crash',
   });
   stopWatchdog();
-  stopAllLoops();
   for (const id of Object.keys(toggleState)) toggleState[id] = false;
   if (engine) { try { engine.close(); } catch { /* ignore */ } engine = null; }
   notify('trainer:disconnected', { reason: reason || 'closed', toggles: { ...toggleState } });
@@ -141,12 +107,6 @@ async function fireCheat(id) {
   const { byId } = await loadTrainer();
   const c = byId(id);
   if (!c) return;
-  if (c.kind === 'loop') {                                  // hotkey flips the loop on/off (renders as a toggle)
-    const next = !loops[id];
-    if (next) startLoop(c); else stopLoop(id);
-    notify('trainer:hotkey-fired', { id, ok: true, kind: 'toggle', on: next });
-    return;
-  }
   const r = gateExec(c.kind, () => {
     if (c.kind === 'toggle') { const next = !toggleState[id]; engine.exec(next ? c.on : c.off); toggleState[id] = next; return { ok: true, kind: 'toggle', on: next }; }
     return { ...execCheat(c), kind: 'action' };
@@ -290,7 +250,6 @@ function registerIpc() {
       try {
         const { attach } = await loadTrainer();
         stopWatchdog();                          // pause liveness checks across the handle swap (no false disconnect)
-        stopAllLoops();                          // drop loops bound to the old handle
         for (const id of Object.keys(toggleState)) toggleState[id] = false;  // fresh session → clean toggle state (renderer re-syncs via status)
         spawnTally = {};                          // fresh session tally for the flight log
         if (engine) { try { engine.close(); } catch { /* ignore */ } }
@@ -311,10 +270,6 @@ function registerIpc() {
     const { byId } = await loadTrainer();
     const c = byId(id);
     if (!c) return { ok: false, error: `cheat desconocido: ${id}` };
-    if (c.kind === 'loop') {                                // start/stop the repeat timer (not a single exec)
-      if (state === 'off') stopLoop(id); else startLoop(c);
-      return { ok: true };
-    }
     return gateExec(c.kind, () => {
       if (c.kind === 'toggle') { const on = state !== 'off'; engine.exec(on ? c.on : c.off); toggleState[id] = on; return { ok: true, on }; }
       return execCheat(c);
@@ -363,5 +318,5 @@ if (!app.requestSingleInstanceLock()) {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); else showWindow(); });
   app.on('window-all-closed', () => { /* stay alive in the tray — quit only via the tray menu */ });
   app.on('before-quit', () => { isQuitting = true; });
-  app.on('will-quit', () => { stopWatchdog(); stopAllLoops(); globalShortcut.unregisterAll(); });
+  app.on('will-quit', () => { stopWatchdog(); globalShortcut.unregisterAll(); });
 }

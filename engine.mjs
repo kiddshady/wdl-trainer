@@ -145,23 +145,6 @@ const buildStub = (singleton, pCmd, fn) => Buffer.concat([
   Buffer.from([0xC3]),                       // ret
 ]);
 
-// Stub that loads the singleton INDIRECTLY from its stable pointer slot at run time — used for
-// persistent 'prepared' commands (loops). The stub is allocated once and reused for every fire, yet
-// always calls with the CURRENT singleton, so it never needs rewriting (no stale baked immediate).
-// Same stack layout as buildStub (proven in-game), with two extra non-stack instructions before call.
-const buildStubIndirect = (pSlot, pCmd, fn) => Buffer.concat([
-  Buffer.from([0x48, 0x83, 0xEC, 0x28]),     // sub rsp, 0x28
-  Buffer.from([0x48, 0xB8]), u64(pSlot),     // mov rax, singletonPtrAddr
-  Buffer.from([0x48, 0x8B, 0x08]),           // mov rcx, [rax]   ← live singleton
-  Buffer.from([0x48, 0xBA]), u64(pCmd),      // mov rdx, pCmd
-  Buffer.from([0x4D, 0x31, 0xC0]),           // xor r8, r8
-  Buffer.from([0x48, 0xB8]), u64(fn),        // mov rax, ExecuteLuaString
-  Buffer.from([0xFF, 0xD0]),                 // call rax
-  Buffer.from([0x48, 0x83, 0xC4, 0x28]),     // add rsp, 0x28
-  Buffer.from([0x31, 0xC0]),                 // xor eax, eax
-  Buffer.from([0xC3]),                       // ret
-]);
-
 export async function attach(opts = {}) {
   const log = typeof opts.log === 'function' ? opts.log : () => {};   // flight-recorder sink (no-op unless main passes one)
   const info = await discover();
@@ -182,11 +165,10 @@ export async function attach(opts = {}) {
   // --- per-handle lifecycle bookkeeping ---
   let closed = false;            // set by close(); deferred frees skip once true (handle is gone)
   const freeTimers = new Set();  // pending setTimeout ids for deferred cmd frees (cleared on close)
-  const prepared = new Set();    // live prepared commands (loops), so close() can reclaim their pages
   const leakedOnTimeout = [];    // addrs we couldn't free because a thread timed out still using them
   let mailbox = 0n, mtCmdPage = 0n;  // EXPERIMENTAL main-thread hook: mailbox page + reusable Lua cmd page
   let hookState = null;              // { target, stolenLen, stolen, pHandler, full } while a hook is installed
-  let hookRefs = 0;                  // refcount so the refill loop + spawns SHARE one resident hook (0 = none)
+  let hookRefs = 0;                  // refcount so overlapping acquirers SHARE one resident hook (0 = none)
   let mtBusy = false;                // one-main-thread-command-in-flight guard (mtCmdPage is reused)
   let spawnSite;                     // spawn hook site: undefined=untried, null=not found, 'ambiguous'=>1 match (see spawnCandidates), {addr,stolenLen}=resolved
   let spawnCandidates = null;        // [{addr,stolenLen}] when the AOB matched >1 site → disambiguated live by which one ticks per-frame
@@ -241,54 +223,6 @@ export async function attach(opts = {}) {
     }
     log('exec.foreign.end', { tag, wr });
     return true;
-  }
-
-  // Pre-build a reusable command for a hot loop (e.g. Infinite Ammo). Allocates the cmd buffer + an
-  // indirect stub ONCE; each fire() only relaunches the thread — no per-tick alloc/free and no
-  // per-tick use-after-free window. dispose() frees the pages; do it on stop / disconnect / reattach.
-  function prepare(luaCode) {
-    if (closed) throw new Error('engine closed');
-    const cmdBuf = Buffer.from(luaCode + '\0', 'utf8');
-    const pCmd = VirtualAllocEx(h, 0n, cmdBuf.length, MEM_COMMIT_RESERVE, PAGE_READWRITE);
-    if (isNull(pCmd)) throw new Error(`VirtualAllocEx(prep cmd) failed ${GetLastError()}`);
-    WriteProcessMemory(h, pCmd, cmdBuf, cmdBuf.length, null);
-
-    const stub = buildStubIndirect(singletonPtrAddr, pCmd, execAddr);
-    const pStub = VirtualAllocEx(h, 0n, stub.length, MEM_COMMIT_RESERVE, PAGE_EXECUTE_READWRITE);
-    if (isNull(pStub)) { try { VirtualFreeEx(h, pCmd, 0, MEM_RELEASE); } catch { /* ignore */ } throw new Error(`VirtualAllocEx(prep stub) failed ${GetLastError()}`); }
-    WriteProcessMemory(h, pStub, stub, stub.length, null);
-
-    let disposed = false;
-    const cmd = {
-      pStub, pCmd,
-      // fire the prepared command. Returns false (a harmless skip) if not in a playable state — the
-      // indirect stub would otherwise call ExecuteLuaString with a null `this`.
-      fire() {
-        if (disposed || closed) return false;
-        if (readSingleton() === 0n) return false;
-        const th = CreateRemoteThread(h, null, 0, pStub, 0n, 0, null);
-        if (isNull(th)) throw new Error(`CreateRemoteThread(prep) failed ${GetLastError()}`);
-        // Short cap: the refill returns in <<1ms, so this bounds any stall-induced main-thread block
-        // to ~1s instead of 5s. A timeout is harmless here — the persistent pages are never freed
-        // mid-loop, so a lingering thread just re-reads constant content; the next fire reuses them.
-        const wr = WaitForSingleObject(th, 1000);
-        CloseHandle(th);
-        return wr === WAIT_OBJECT_0;
-      },
-      // free the persistent pages. dispose() runs from stopLoop / disconnect / reattach — always
-      // after the loop stops ticking and the last sub-ms fire has returned, so no thread is mid-read;
-      // skipped if the handle is already closed (the pages die with the process).
-      dispose() {
-        if (disposed) return;
-        disposed = true;
-        prepared.delete(cmd);
-        if (closed) return;
-        try { VirtualFreeEx(h, pStub, 0, MEM_RELEASE); } catch { /* ignore */ }
-        try { VirtualFreeEx(h, pCmd, 0, MEM_RELEASE); } catch { /* ignore */ }
-      },
-    };
-    prepared.add(cmd);
-    return cmd;
   }
 
   // ============================================================================================
@@ -586,12 +520,12 @@ export async function attach(opts = {}) {
     return best;                                          // null ⇒ nothing ticked (paused/not walking) → retry later
   }
 
-  // ---- shared game-thread hook: refcounted so the refill loop AND spawns run on ONE resident hook ----
+  // ---- shared game-thread hook: refcounted so overlapping acquirers run on ONE resident hook ----
   // The per-frame trampoline runs Lua on the game's own thread at a frame-safe point (no foreign-thread
-  // race). Only one hook can exist at a time (single hookState), so the loop and spawns SHARE it via a
-  // refcount: the first acquirer probe-validates + installs the full handler; later acquirers just bump
-  // the count; the last release uninstalls. This is what lets Infinite Ammo keep the hook resident for
-  // its whole ON duration while spawns still piggyback on it (instead of falling back to crash-prone exec).
+  // race). Only one hook can exist at a time (single hookState), so acquirers SHARE it via a refcount:
+  // the first probe-validates + installs the full handler; later ones just bump the count; the last
+  // release uninstalls. spawnOnMainThread is the only acquirer today (a resident loop cheat used to be
+  // the other), so keep acquire/release strictly paired — an unbalanced count strands the hook.
 
   // Confirm the site is a genuine per-frame sim-thread callsite before we ever full-install (a bad site =
   // hard crash): install a do-nothing PROBE handler, watch the frameCounter climb, uninstall. Cached via
@@ -647,38 +581,6 @@ export async function attach(opts = {}) {
       return { ok: done, reason: done ? 'ok' : 'hook did not fire' };
     } catch (e) { return { ok: false, reason: e.message }; }
     finally { releaseFullHook(); }
-  }
-
-  // Prepare a game-thread LOOP command (e.g. Infinite Ammo): keep the shared hook resident and, each
-  // fire(), only ARM the mailbox — the game thread runs the Lua per-frame at a safe phase, zero
-  // CreateRemoteThread per tick (the whole point: no accumulating foreign-thread race over a long session).
-  // The hook is acquired LAZILY on the first in-world fire, so toggling ON in a menu doesn't fail — it just
-  // retries each tick until the site ticks. fire() NEVER throws: an mtBusy overlap with an in-flight spawn,
-  // or being out-of-world, is a harmless idempotent skip (returns false) — so a benign overlap can't drive
-  // main.js's gateExec catch into a full teardown. Throws at CREATION only if the build has no usable hook
-  // site → the caller falls back to the foreign-thread prepare() loop. dispose() drops the hook reference.
-  function prepareMainThreadLoop(luaCode) {
-    if (closed) throw new Error('engine closed');
-    if (!resolveHookSite()) throw new Error('hook site not found (game build?)');
-    let disposed = false, acquired = false;
-    return {
-      fire() {
-        if (disposed || closed) return false;
-        if (readSingleton() === 0n) return false;        // not in a playable state → skip; don't acquire yet
-        if (!acquired) {
-          const acq = acquireFullHook();
-          if (!acq.ok) return false;                     // site not ticking yet (menu/loading) → retry next tick
-          acquired = true;
-        }
-        try { return execOnMainThread(luaCode, 150); }
-        catch { return false; }                          // mtBusy overlap with a spawn → harmless skip (never propagate)
-      },
-      dispose() {
-        if (disposed) return;
-        disposed = true;
-        if (acquired) { releaseFullHook(); acquired = false; }
-      },
-    };
   }
 
   // ---- hook-site DISCOVERY helpers (read-only; used to find a per-frame sim-thread callsite) ----
@@ -804,9 +706,7 @@ export async function attach(opts = {}) {
     }
     for (const id of freeTimers) clearTimeout(id);
     freeTimers.clear();
-    // reclaim still-allocated remote pages while the handle is valid (prepared loops, timeout leaks)
-    for (const cmd of prepared) { try { VirtualFreeEx(h, cmd.pStub, 0, MEM_RELEASE); VirtualFreeEx(h, cmd.pCmd, 0, MEM_RELEASE); } catch { /* ignore */ } }
-    prepared.clear();
+    // reclaim still-allocated remote pages while the handle is valid (timeout leaks)
     for (const addr of leakedOnTimeout) { try { VirtualFreeEx(h, addr, 0, MEM_RELEASE); } catch { /* ignore */ } }
     leakedOnTimeout.length = 0;
     CloseHandle(h);
@@ -819,8 +719,6 @@ export async function attach(opts = {}) {
     info: { pid: info.pid, module: info.module, base: hex(base), execAddr: hex(execAddr), singletonPtr: hex(singletonPtrAddr),
       spawnHook: (spawnSite && spawnSite.addr) ? hex(spawnSite.addr) : (spawnSite === 'ambiguous' ? `ambiguous(${spawnCandidates ? spawnCandidates.length : '?'})` : null) },
     exec,
-    prepare,
-    prepareMainThreadLoop,             // loop cheats (Infinite Ammo) → keep the shared hook resident, arm per tick
     spawnOnMainThread,                 // heavy spawns → run on the game thread (crash-free); falls back to exec()
     alive,
     exitCode,                          // read at DISCONNECT: 0 = clean quit, non-zero = crash
