@@ -1,7 +1,7 @@
 {
   "name": "wdl-trainer",
   "private": true,
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "A Penumbra desktop trainer for Watch Dogs Legion (single-player).",
   "author": "Kidd Shady",
   "main": "main.js",
