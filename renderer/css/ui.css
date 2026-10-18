@@ -1,0 +1,258 @@
+/* @penumbra/ui — primitive styles. Requires @penumbra/tokens/tokens.css (the --u-* variables).
+   Extracted from Umbra's umbra.css; Electron-only bits (-webkit-app-region) were dropped so this
+   works in any web app. Class names are kept (.btn, .field, .u-modal-*, …) — that's the contract. */
+
+/* ===== Scrollbars — thin, floating, rounded (Umbra's look), applied globally ===== */
+* { scrollbar-width: thin; scrollbar-color: #2a2f39 transparent; }   /* Firefox */
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; }
+/* transparent border + background-clip:padding-box makes the thumb sit inset on any surface */
+::-webkit-scrollbar-thumb {
+  background: #2a2f39; border-radius: 999px;
+  border: 3px solid transparent; background-clip: padding-box; cursor: pointer;
+}
+::-webkit-scrollbar-thumb:hover { background-color: #353b47; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ===== Button ===== */
+button.btn {
+  font-family: inherit; font-size: 13px;
+  padding: 7px 14px;
+  border-radius: var(--u-radius-sm);
+  border: 1px solid var(--u-border);
+  background: var(--u-bg-input);
+  color: var(--u-text);
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.12s ease, transform 0.08s ease;
+}
+button.btn:hover { background: var(--u-bg-hover); }
+/* Click feedback: flash instantly on press (transition:none), then fade back over the base
+   transition on release — so even a quick click leaves a visible cue that it registered. */
+button.btn:active { transition: none; background: var(--u-accent-soft); border-color: var(--u-accent); transform: scale(0.96); }
+button.btn.primary { background: var(--u-accent); border-color: var(--u-accent); color: #0b0d12; font-weight: 600; }
+button.btn.primary:hover { background: var(--u-accent-hover); }
+button.btn.primary:active { transition: none; background: var(--u-accent-hover); border-color: var(--u-accent-hover); transform: scale(0.96); }
+/* danger variant — for destructive confirms */
+button.btn.primary.danger { background: var(--u-danger); border-color: var(--u-danger); color: #fff; }
+button.btn.primary.danger:hover { background: var(--u-danger); filter: brightness(1.08); }
+
+/* ===== Text fields ===== */
+input.field, textarea.field {
+  font-family: inherit; font-size: 13px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--u-radius-sm);
+  border: 1px solid var(--u-border);
+  background: var(--u-bg-input);
+  color: var(--u-text);
+  user-select: text;
+  /* strip native chrome — iOS Safari adds an inner shadow + rounding to inputs/textareas — so the
+     flat Penumbra look holds across engines (Umbra only ran in Chromium, where this wasn't needed) */
+  -webkit-appearance: none;
+  appearance: none;
+}
+input.field:focus, textarea.field:focus { outline: none; border-color: var(--u-accent); }
+input.field::placeholder, textarea.field::placeholder { color: var(--u-text-muted); }
+
+/* ===== PasswordField — secret input with a show/hide eye toggle ===== */
+.pw-field { position: relative; width: 100%; }
+.pw-field .pw-input { width: 100%; padding-right: 36px; }
+/* Edge/IE draw a native password-reveal eye (and a clear "x") that duplicate Penumbra's toggle — hide them. */
+.pw-input::-ms-reveal, .pw-input::-ms-clear { display: none; }
+.pw-toggle {
+  position: absolute; top: 1px; right: 1px; bottom: 1px; width: 32px;
+  display: grid; place-items: center;
+  border: none; background: transparent; color: var(--u-text-muted);
+  cursor: pointer; border-radius: var(--u-radius-sm);
+  transition: color 0.12s ease;
+}
+.pw-toggle:hover { color: var(--u-text); }
+
+/* ===== NumberInput — design-system up/down steppers replacing the native spin buttons ===== */
+.num-input { position: relative; display: inline-flex; width: 100%; vertical-align: middle; }
+.num-input-field {
+  width: 100%; font-family: inherit; font-size: 13px;
+  padding: 8px 24px 8px 10px;
+  border-radius: var(--u-radius-sm); border: 1px solid var(--u-border);
+  background: var(--u-bg-input); color: var(--u-text); user-select: text;
+  /* hide the browser's NATIVE number spinners so only Penumbra's custom steppers show.
+     Firefox needs appearance:textfield on the input; Chrome/Safari/Edge need the pseudo-elements
+     below. Umbra only ran in Chromium, so the Firefox case was a latent gap until web use exposed it. */
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.num-input-field:focus { outline: none; border-color: var(--u-accent); }
+.num-input-field::-webkit-inner-spin-button,
+.num-input-field::-webkit-outer-spin-button { -webkit-appearance: none; appearance: none; margin: 0; }
+.num-input-steppers {
+  position: absolute; right: 4px; top: 4px; bottom: 4px; width: 17px;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.num-input-step {
+  flex: 1; min-height: 0; border: none; background: transparent; color: var(--u-text-muted);
+  cursor: pointer; display: grid; place-items: center; padding: 0; border-radius: 3px;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+.num-input-step:hover { background: var(--u-bg-hover); color: var(--u-text); }
+.num-input-step:active { background: var(--u-accent-soft); color: var(--u-accent); }
+
+/* ===== Toggle switch ===== */
+.set-toggle {
+  width: 40px; height: 22px; border-radius: 11px; border: 1px solid var(--u-border);
+  background: var(--u-bg-input); cursor: pointer; padding: 0; position: relative;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  will-change: transform;
+}
+.set-toggle span {
+  position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--u-text-muted); transition: transform 0.15s ease, background 0.15s ease;
+  will-change: transform;
+}
+.set-toggle.on { background: var(--u-accent-soft); border-color: var(--u-accent); }
+.set-toggle.on span { transform: translateX(18px); background: var(--u-accent); }
+
+/* ===== Icon ===== */
+.u-icon { display: block; flex-shrink: 0; }
+
+/* ===== Tooltip — the single portaled element driven by initTooltips() ===== */
+.u-tooltip {
+  position: fixed; left: 0; top: 0; z-index: 1300; /* above modals (1000) and toasts (1200) */
+  padding: 4px 8px; border-radius: var(--u-radius-sm);
+  background: var(--u-bg-elevated); color: var(--u-text);
+  border: 1px solid var(--u-border); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  font-size: 12px; line-height: 1; white-space: nowrap;
+  pointer-events: none; opacity: 0; transform: translateY(-4px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.u-tooltip[data-pos="top"] { transform: translateY(4px); }   /* anchored above → rise upward */
+.u-tooltip.open { opacity: 1; transform: translateY(0); }
+.u-tooltip-wrap { white-space: normal; max-width: 260px; line-height: 1.35; } /* long tips wrap */
+
+/* ===== Modal ===== */
+.u-modal-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  display: grid; place-items: center;
+  background: rgba(6, 7, 9, 0.62);
+  -webkit-backdrop-filter: blur(2px);   /* Safari applies the blur only with the prefix */
+  backdrop-filter: blur(2px);
+  animation: u-modal-fade 0.16s ease;
+}
+/* Stacked modals share ONE steady scrim: a nested overlay paints no scrim/blur of its own, so
+   the outer scrim never moves while the inner dialog just pops in and out. */
+.u-modal-overlay .u-modal-overlay { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.u-modal {
+  background: var(--u-bg-elevated);
+  border: 1px solid var(--u-border);
+  border-radius: var(--u-radius-lg);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0,0,0,0.2);
+  max-width: calc(100vw - 48px);
+  outline: none;
+  animation: u-modal-pop 0.18s var(--u-ease-spring);
+}
+.u-modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px 0;
+}
+.u-modal-head h3 { font-size: 15px; font-weight: 600; }
+.u-modal-x {
+  background: transparent; border: none; color: var(--u-text-muted);
+  cursor: pointer; font-size: 13px; line-height: 1; padding: 2px;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: color 0.12s ease;
+}
+.u-modal-x:hover { color: var(--u-text); }
+.u-modal-body { padding: 12px 18px 4px; }
+.u-modal-msg { color: var(--u-text-dim); font-size: 13px; line-height: 1.55; }
+.u-modal-foot {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 14px 18px 16px;
+}
+
+@keyframes u-modal-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes u-modal-pop {
+  from { opacity: 0; transform: translateY(6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+/* exit: driven by the Modal's `closing` prop — overlay fades a touch slower than the panel so the
+   panel's pop-out finishes on-screen; overlay's animationend fires the Modal's onExited (unmount) */
+.u-modal-overlay.closing { animation: u-modal-fade-out 0.16s ease forwards; }
+.u-modal.closing { animation: u-modal-pop-out 0.14s ease forwards; }
+@keyframes u-modal-fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes u-modal-pop-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(4px) scale(0.97); }
+}
+
+/* ===== Select (replaces native <select>) ===== */
+.u-select { position: relative; display: inline-block; max-width: 100%; vertical-align: middle; }
+.u-select.disabled { opacity: 0.55; pointer-events: none; }
+.u-select-trigger {
+  font-family: inherit; font-size: 13px;
+  display: inline-flex; align-items: center; justify-content: space-between; gap: 10px;
+  min-width: 150px; max-width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--u-radius-sm);          /* same radius as buttons / inputs */
+  border: 1px solid var(--u-border);
+  background: var(--u-bg-input);
+  color: var(--u-text);
+  cursor: pointer; text-align: left;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.u-select-trigger:hover { background: var(--u-bg-hover); }
+/* Lit only while open or when keyboard-focused (:focus-visible) — a plain mouse click no
+   longer leaves the accent border stuck on the trigger after the menu closes. */
+.u-select-trigger.open, .u-select-trigger:focus-visible { outline: none; border-color: var(--u-accent); }
+.u-select-trigger:focus { outline: none; }
+.u-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.u-select-value.placeholder { color: var(--u-text-muted); }
+.u-select-chev { color: var(--u-text-dim); font-size: 10px; flex-shrink: 0; transition: transform 0.14s ease; }
+.u-select-trigger.open .u-select-chev { transform: rotate(180deg); }
+
+.u-select-menu {
+  position: fixed; z-index: 1100;
+  margin: 0; padding: 4px; list-style: none;
+  width: max-content; max-width: 380px; max-height: 264px; overflow-y: auto;
+  background: var(--u-bg-elevated);
+  border: 1px solid var(--u-border);
+  border-radius: var(--u-radius-sm);          /* matches the trigger */
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+  animation: u-select-in 0.1s ease;
+}
+.u-select-menu.up { animation: u-select-in-up 0.1s ease; }
+.u-select-opt {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 9px; font-size: 13px; color: var(--u-text-dim);
+  border-radius: var(--u-radius-sm); cursor: pointer;
+}
+.u-select-opt-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.u-select-opt.active { background: var(--u-bg-hover); color: var(--u-text); }
+.u-select-opt.selected { color: var(--u-text); font-weight: 500; }
+.u-select-check { color: var(--u-accent); font-size: 11px; flex-shrink: 0; }
+.u-select-empty { padding: 8px 9px; font-size: 12px; color: var(--u-text-muted); }
+
+@keyframes u-select-in    { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes u-select-in-up { from { opacity: 0; transform: translateY(4px);  } to { opacity: 1; transform: none; } }
+/* exit — mirrors the entry direction; .closing via usePresence keeps the portal mounted while it plays */
+.u-select-menu.closing { animation: u-select-out 0.12s ease forwards; pointer-events: none; }
+.u-select-menu.up.closing { animation-name: u-select-out-up; }
+@keyframes u-select-out    { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-4px); } }
+@keyframes u-select-out-up { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(4px); } }
+
+/* ===== Avatar (generated SVG monogram) ===== */
+.u-avatar { position: relative; display: inline-grid; place-items: center; flex-shrink: 0; vertical-align: middle; }
+.u-avatar svg { position: absolute; inset: 0; display: block; }
+.u-avatar-initials { position: relative; font-weight: 600; color: #0b0d12; letter-spacing: 0.02em; line-height: 1; }
+/* fade the photo in once it decodes — starts hidden, eases in when the component marks it `.loaded`.
+   Only opacity animates (GPU-cheap, per the perf rule). */
+.u-avatar-img {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 28%; display: block;
+  opacity: 0; transition: opacity 0.22s ease;
+}
+.u-avatar-img.loaded { opacity: 1; }
+
+/* ===== Reduced motion — kill entrance/exit animations; timers still unmount portals ===== */
+@media (prefers-reduced-motion: reduce) {
+  .u-modal-overlay, .u-modal, .u-modal-overlay.closing, .u-modal.closing,
+  .u-select-menu, .u-select-menu.up, .u-select-menu.closing, .u-select-menu.up.closing,
+  .u-avatar-img { animation: none; }
+}

@@ -1,0 +1,64 @@
+/* Penumbra — sober design tokens. Single visual model, dark. Extracted from Umbra's umbra.css. */
+
+:root {
+  /* neutral surfaces — an elevation ladder; surfaces step up by lightness */
+  --u-bg:           #0e0f12;
+  --u-bg-elevated:  #16181d;
+  --u-bg-panel:     #181b21;
+  --u-bg-input:     #1c1f26;
+  --u-bg-hover:     #21252d;
+
+  /* borders */
+  --u-border:       #262a33;
+  --u-border-soft:  #1e222a;
+
+  /* text — a strict three-step emphasis hierarchy */
+  --u-text:         #e7e9ee;
+  --u-text-dim:     #9aa1ac;
+  --u-text-muted:   #616873;
+
+  /* single restrained accent */
+  --u-accent:       #5b8cff;
+  --u-accent-hover: #7aa2ff;
+  --u-accent-soft:  rgba(91, 140, 255, 0.14);
+
+  /* status — color is for state only, never decoration */
+  --u-danger:       #e5484d;
+  /* opaque (not rgba) so every danger highlight looks identical regardless of the surface
+     behind it — this is exactly what danger-soft rgba(…,0.15) renders over --u-bg-elevated */
+  --u-danger-soft:  #351f24;
+  --u-success:      #4caf6e;
+  --u-warning:      #d6a23a;
+
+  /* type — system font stack; Segoe UI Variable (Win11) first so --u-font-weight can interpolate,
+     falling back to classic Segoe UI elsewhere */
+  --u-font: 'Segoe UI Variable Text', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --u-mono: 'JetBrains Mono', 'Cascadia Code', ui-monospace, 'SF Mono', Menlo, monospace;
+  --u-font-weight: 470; /* base UI text weight; 400 = stock Segoe UI, 470 ≈ clearly more robust. Needs Segoe UI Variable to interpolate continuously — dial 430–480 to taste */
+
+  /* metrics */
+  --u-titlebar-h: 40px;
+  --u-radius-sm: 4px;
+  --u-radius-md: 7px;
+  --u-radius-lg: 10px;
+  --u-fade-h: 32px; /* height of the soft scrim where fixed chrome meets scrolling content */
+  --u-chat-font: 14px;
+
+  /* elevation — shared drop shadow for floating cards/toasts:
+     a near layer defines the edge + a deep layer floats the card above same-colored panels */
+  --u-toast-shadow: 0 8px 20px rgba(0, 0, 0, 0.52), 0 26px 64px rgba(0, 0, 0, 0.72);
+
+  /* ── motion ─────────────────────────────────────────────────────────────────
+     Named easing curves, promoted from Umbra's inline cubic-beziers. The asymmetry is
+     intentional: entrances settle softly, exits leave a touch quicker. */
+  --u-ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);    /* gentle ease-out — entrances, expands */
+  --u-ease-in-sharp: cubic-bezier(0.4, 0, 0.6, 1);      /* snappier ease-in — exits, collapses */
+  --u-ease-spring:   cubic-bezier(0.2, 0.9, 0.3, 1.2);  /* slight overshoot — modal / toast pop */
+  --u-ease-pop:      cubic-bezier(0.2, 0.8, 0.25, 1);   /* popover jump — menus, dropdowns */
+
+  /* duration scale — short and quiet; nothing draws attention to itself */
+  --u-dur-1: 0.1s;
+  --u-dur-2: 0.14s;
+  --u-dur-3: 0.18s;
+  --u-dur-4: 0.22s;
+}

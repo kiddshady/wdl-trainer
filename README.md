@@ -30,10 +30,19 @@ each cheat as a Lua string via a remote thread. Every cheat is just one line of 
 
 ```bash
 npm install
-npm run dev        # build islands + launch Electron (run the terminal as admin to attach to the game)
+npm run dev        # launch Electron (run the terminal as admin to attach to the game)
 npm run gen:icon   # regenerate build/icon.png from build/icon.svg
 npm run release    # build the NSIS installer and publish to GitHub Releases (needs GH_TOKEN)
 ```
+
+### The UI is frozen (since 0.4.1)
+
+Penumbra, the design system the UI was built on, no longer exists (deleted on 12 Oct 2026),
+so `renderer/src/*.jsx` can't be rebuilt. The last builds made from it are committed instead:
+`renderer/js/islands/*.bundle.js` (React inlined) plus `renderer/css/tokens.css` and
+`renderer/css/ui.css`. The app runs and packages from those as they are. `build-islands.mjs`
+and `scripts/copy-css.mjs` stay only for reference. Changing the UI means porting it to
+another framework first.
 
 ---
 
